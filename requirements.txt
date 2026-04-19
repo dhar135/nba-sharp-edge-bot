@@ -1,0 +1,14 @@
+certifi==2026.2.25
+charset-normalizer==3.4.7
+cloudscraper==1.2.71
+idna==3.11
+nba_api==1.11.4
+numpy==2.4.4
+pandas==3.0.2
+pyparsing==3.3.2
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.2
+requests==2.33.1
+requests-toolbelt==1.0.0
+six==1.17.0
+urllib3==2.6.3
