@@ -5,6 +5,7 @@ import cloudscraper
 from engine import calculate_all_edges
 from notifier import send_discord_alert
 from dotenv import load_dotenv
+from db import init_db, log_predictions
 
 load_dotenv()
 
@@ -96,8 +97,10 @@ def parse_prizepicks_json(json_data):
     return df
 
 if __name__ == "__main__":
-    # Pull the webhook securely from the environment
     DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_URL")
+    
+    # 1. Initialize DB
+    init_db()
     
     print("=== Sharp Edge MVP Initialization ===\n")
     
@@ -117,8 +120,11 @@ if __name__ == "__main__":
             edges_df = edges_df.sort_values(by='Abs Diff', ascending=False).drop(columns=['Abs Diff'])
             print(edges_df.to_string(index=False))
             
-            # Fire the alert as long as the webhook exists in the .env file
+            # Send Discord Alert
             if DISCORD_WEBHOOK:
                 send_discord_alert(edges_df, DISCORD_WEBHOOK)
             else:
-                print("[!] Discord alert skipped. No webhook URL found in .env file.")
+                print("[!] Discord alert skipped. No webhook URL found.")
+                
+            # 2. Log to Database
+            log_predictions(edges_df)
