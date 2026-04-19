@@ -11,12 +11,16 @@ def send_discord_alert(df, webhook_url):
         
     print("\n[*] Formatting and sending Discord alert...")
     
-    # Let's only send the absolute best plays to avoid spam (e.g., > 30% edge)
-    premium_plays = df[df['Edge %'].abs() >= 30.0].head(5)
+    # 1. Filter for plays that meet the 30% minimum threshold (both positive and negative)
+    qualified_plays = df[df['Edge %'].abs() >= 30.0].copy()
     
-    if premium_plays.empty:
+    if qualified_plays.empty:
         print("[-] No premium plays (>30% edge) found. Skipping alert.")
         return
+
+    # 2. Sort by the highest absolute edge percentage to rank Overs and Unders equally
+    qualified_plays['Abs Edge'] = qualified_plays['Edge %'].abs()
+    premium_plays = qualified_plays.sort_values(by='Abs Edge', ascending=False).head(5)
 
     # Format the message
     message = "🚨 **SHARP EDGE ALERT** 🚨\n\n"
