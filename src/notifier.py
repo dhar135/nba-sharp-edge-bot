@@ -5,7 +5,7 @@ import os
 import pandas as pd
 from google import genai
 from google.genai import types
-from utils import logger, timer
+from utils.utils import logger, timer
 
 CORE_STATS = ["Points", "Rebounds", "Assists", "Pts+Rebs+Asts", "Pts+Rebs", "Pts+Asts", "Rebs+Asts"]
 MICRO_STATS = ["3-PT Made", "Blocked Shots", "Steals", "Turnovers", "Blks+Stls"]
@@ -81,9 +81,20 @@ def send_discord_alert(df, webhook_url):
         msg = ""
         for index, row in segment_df.iterrows():
             emoji = "📈" if row['Play'] == "OVER" else "📉"
+            diff_str = f"+{row['Diff']}" if row['Diff'] > 0 else f"{row['Diff']}"
+            
+            # Format the ML Probability badge if this is a Points prop
+            ml_badge = ""
+            if 'ML Prob' in row and pd.notna(row['ML Prob']):
+                # If it's an OVER play, show probability of OVER. If UNDER, show probability of UNDER (100 - over)
+                display_prob = row['ML Prob'] if row['Play'] == "OVER" else round(100 - row['ML Prob'], 1)
+                ml_badge = f" | 🤖 **ML Conf: {display_prob}%**"
+
             msg += f"**{row['Player']}** ({row['Team']}) | {row['Stat']}\n"
+            msg += f"> 🥊 Matchup: {row['Matchup']}\n"
             msg += f"> 🎯 Line: **{row['PP Line']}** | Play: {emoji} **{row['Play']}**\n"
-            msg += f"> ⚖️ Edge: **{row['Edge %']}%** | 📊 15g Med: {row['15g Median']}\n\n"
+            msg += f"> 📊 15g Med: **{row['15g Median']}** | 5g Med: **{row['5g Median']}**\n"
+            msg += f"> ⚖️ Edge: **{row['Edge %']}%**{ml_badge}\n\n"
         return msg
 
     embeds = []

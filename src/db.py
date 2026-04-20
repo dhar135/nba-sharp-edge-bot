@@ -2,7 +2,7 @@
 import sqlite3
 import pandas as pd
 from datetime import datetime
-from utils import logger, timer
+from utils.utils import logger, timer
 
 DB_NAME = "sharp_edge.db"
 
@@ -85,3 +85,29 @@ def log_predictions(df):
     
     if inserted_count > 0:
         logger.info(f"[+] Logged {inserted_count} new predictions to the database.")
+
+
+def filter_new_plays(df):
+    """Filters the dataframe to ONLY include plays we haven't logged today."""
+    if df.empty:
+        return df
+        
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    today_date = datetime.now().strftime("%Y-%m-%d")
+    
+    new_rows = []
+    for index, row in df.iterrows():
+        cursor.execute('''
+            SELECT count(1) FROM predictions 
+            WHERE date = ? AND player = ? AND stat_type = ?
+        ''', (today_date, row['Player'], row['Stat']))
+        
+        exists = cursor.fetchone()[0]
+        if not exists:
+            new_rows.append(row)
+            
+    conn.close()
+    
+    # Return a new DataFrame with only the fresh, un-alerted plays
+    return pd.DataFrame(new_rows) if new_rows else pd.DataFrame()

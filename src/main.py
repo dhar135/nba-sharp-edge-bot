@@ -5,10 +5,10 @@ import cloudscraper
 from engine import calculate_all_edges
 from notifier import send_discord_alert
 from dotenv import load_dotenv
-from db import init_db, log_predictions
+from db import init_db, log_predictions, filter_new_plays
 from grader import grade_pending_bets
-from constants import SUPPORTED_STATS
-from utils import logger, timer
+from utils.constants import SUPPORTED_STATS
+from utils.utils import logger, timer
 
 load_dotenv()
 
@@ -135,14 +135,20 @@ if __name__ == "__main__":
             edges_df = edges_df.sort_values(by='Abs Diff', ascending=False).drop(columns=['Abs Diff'])
             logger.info(edges_df.to_string(index=False))
             
-            # Send Discord Alert
-            if DISCORD_WEBHOOK:
-                send_discord_alert(edges_df, DISCORD_WEBHOOK)
-            else:
-                logger.info("[!] Discord alert skipped. No webhook URL found.")
-                
-            # 2. Log to Database
-            log_predictions(edges_df)
+            # FILTER THE SPAM: Only keep plays we haven't seen today
+            new_plays_df = filter_new_plays(edges_df)
             
-            # 3. Grade any pending bets
-            grade_pending_bets()
+            if not new_plays_df.empty:
+                # Send Discord Alert
+                if DISCORD_WEBHOOK:
+                    send_discord_alert(new_plays_df, DISCORD_WEBHOOK)
+                else:
+                    logger.info("[!] Discord alert skipped. No webhook URL found.")
+                    
+                # 2. Log to Database
+                log_predictions(new_plays_df)
+                
+                # 3. Grade any pending bets
+                grade_pending_bets()
+            else:
+                logger.info("[-] No NEW edges found on this run. Discord alert skipped to prevent spam.")
