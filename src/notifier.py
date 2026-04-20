@@ -145,41 +145,49 @@ def send_discord_alert(df, webhook_url):
         requests.post(webhook_url, data=json.dumps(payload), headers={'Content-Type': 'application/json'})
     logger.info("[+] Discord alert sent successfully!")
 
-def send_grading_report(graded_results, summary, webhook_url):
-    """
-    Sends a grading report to Discord with the results of graded bets.
-    """
-    if not graded_results:
+def send_grading_report(summary, csv_path, webhook_url):
+    """Sends a clean summary of graded bets to Discord and attaches the full CSV."""
+    if not webhook_url:
+        logger.error("[!] No Discord webhook URL found.")
         return
 
-    logger.info("\n[*] Formatting and sending grading report...")
-
-    # Build the message
-    message = "📊 **GRADING REPORT** 📊\n\n"
-    message += f"**Session Summary:** {summary['wins']}W - {summary['losses']}L - {summary['pushes']}P ({summary['win_rate']:.1f}%)\n\n"
-
-    for result in graded_results:
-        emoji = (
-            "✅"
-            if result["status"] == "WIN"
-            else "❌"
-            if result["status"] == "LOSS"
-            else "➖"
-        )
-        message += f"{emoji} **{result['player']}** | {result['stat']} {result['line']} {result['play']}\n"
-        message += f"> Actual: {result['actual']} | Result: **{result['status']}**\n\n"
-
-    payload = {"content": message, "username": "SharpEdge Bot"}
-
+    logger.info("[*] Formatting and sending grading report...")
+    
+    wr_emoji = "🔥" if summary['win_rate'] >= 53.0 else "⚠️"
+    
+    embed = {
+        "title": "⚖️ DAILY GRADING SUMMARY",
+        "color": 0xFFD700, # Gold color
+        "description": "The Live-Pivot grader has completed the midnight batch.\nFull results are attached below.",
+        "fields": [
+            {
+                "name": "📊 Daily Record",
+                "value": f"✅ Wins: **{summary['wins']}**\n❌ Losses: **{summary['losses']}**\n🟰 Pushes: **{summary['pushes']}**\n🚫 Voids: **{summary['voids']}**",
+                "inline": True
+            },
+            {
+                "name": "📈 Performance",
+                "value": f"{wr_emoji} Win Rate: **{summary['win_rate']}%**\n⏳ Pending: **{summary['skipped']}** games",
+                "inline": True
+            }
+        ]
+    }
+    
+    payload = {"embeds": [embed]}
+    
     try:
-        response = requests.post(
-            webhook_url,
-            data=json.dumps(payload),
-            headers={"Content-Type": "application/json"},
-        )
-        if response.status_code == 204:
+        # Check if we have a CSV to attach
+        if csv_path and os.path.exists(csv_path):
+            with open(csv_path, "rb") as f:
+                filename = os.path.basename(csv_path)
+                files = {"file": (filename, f, "text/csv")}
+                response = requests.post(webhook_url, data={"payload_json": json.dumps(payload)}, files=files)
+        else:
+            response = requests.post(webhook_url, json=payload)
+            
+        if response.status_code in [200, 204]:
             logger.info("[+] Grading report sent successfully!")
         else:
-            logger.info(f"[!] Failed to send grading report. Status: {response.status_code}")
+            logger.error(f"[!] Failed to send grading report. Status Code: {response.status_code}")
     except Exception as e:
-        logger.info(f"[!] Grading report webhook error: {e}")
+        logger.error(f"[!] Exception during Discord delivery: {e}")

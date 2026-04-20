@@ -4,6 +4,8 @@ from nba_api.stats.static import players
 from nba_api.stats.endpoints import playergamelog, leaguegamelog, leaguedashteamstats # NEW IMPORT
 import time
 from utils.utils import logger, timer
+from nba_api.stats.endpoints import scoreboardv2, boxscoretraditionalv2
+from nba_api.stats.static import players, teams
 
 
 @timer
@@ -132,3 +134,62 @@ def get_opponent_matchup_multipliers(season="2025-26"):
     except Exception as e:
         logger.error(f"[!] Failed to fetch defensive stats: {e}")
         return None
+    
+SCOREBOARD_CACHE = {}
+
+@timer
+def get_game_status(player_name, game_date, cache, team_abbr):
+    """Finds the Game ID for a player's team on a specific date and checks if it is FINAL."""
+    
+    # 1. Get Player ID
+    if player_name not in cache:
+        player_info = players.find_players_by_full_name(player_name)
+        if not player_info:
+            return "PRE_GAME"
+        cache[player_name] = {'player_id': player_info[0]['id']}
+    
+    # 2. Get Team ID (Handling PrizePicks abbreviations)
+    nba_teams = teams.get_teams()
+    pp_to_nba = {"SA": "SAS", "NY": "NYK", "GS": "GSW", "NO": "NOP", "UTAH": "UTA", "WSH": "WAS"}
+    nba_abbr = pp_to_nba.get(team_abbr.upper(), team_abbr.upper())
+    
+    team_info = [t for t in nba_teams if t['abbreviation'] == nba_abbr]
+    if not team_info:
+        return "PRE_GAME"
+    team_id = team_info[0]['id']
+    cache[player_name]['team_id'] = team_id
+
+    # 3. Fetch Scoreboard for the Date
+    if game_date not in SCOREBOARD_CACHE:
+        try:
+            sb = scoreboardv2.ScoreboardV2(game_date=game_date)
+            SCOREBOARD_CACHE[game_date] = sb.get_data_frames()[0]
+        except Exception as e:
+            logger.error(f"[!] Failed to fetch scoreboard for {game_date}: {e}")
+            return "PRE_GAME"
+
+    sb_df = SCOREBOARD_CACHE[game_date]
+    if sb_df.empty:
+        return "PRE_GAME"
+
+    # 4. Find the specific game and check status
+    game_row = sb_df[(sb_df['HOME_TEAM_ID'] == team_id) | (sb_df['VISITOR_TEAM_ID'] == team_id)]
+    if game_row.empty:
+        return "PRE_GAME" 
+        
+    cache[player_name]['game_id'] = game_row.iloc[0]['GAME_ID']
+    status_id = game_row.iloc[0]['GAME_STATUS_ID'] # 1=Pre, 2=Live, 3=Final
+    
+    if status_id == 3: return "FINAL"
+    elif status_id == 2: return "IN_PROGRESS"
+    else: return "PRE_GAME"
+
+@timer
+def get_live_boxscore(game_id):
+    """Pulls the real-time V2 Boxscore for a game that just finished."""
+    try:
+        box = boxscoretraditionalv2.BoxScoreTraditionalV2(game_id=game_id)
+        return box.get_data_frames()[0]
+    except Exception as e:
+        logger.error(f"[!] Live Boxscore failed for game {game_id}: {e}")
+        return pd.DataFrame()
