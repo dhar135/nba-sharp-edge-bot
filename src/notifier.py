@@ -34,8 +34,9 @@ def send_discord_alert(df, webhook_url):
         # Build the contextual block
         message += f"**{row['Player']}** ({row['Team']}) | {row['Stat']}\n"
         message += f"> 🥊 Matchup: {row['Matchup']}\n"
-        message += f"> 🎯 Line: **{row['PP Line']}** | Median: **{row['15g Median']}** | Avg: {row['15g Avg']}\n"
-        message += f"> ⚖️ Diff: {diff_str} | Edge: **{row['Edge %']}%** | Play: {emoji} **{row['Play']}**\n\n"
+        message += f"> 🎯 Line: **{row['PP Line']}** | Play: {emoji} **{row['Play']}**\n"
+        message += f"> 📊 15g Med: **{row['15g Median']}** | 5g Med: **{row['5g Median']}** | Avg: {row['15g Avg']}\n"
+        message += f"> ⚖️ Diff: {diff_str} | Edge: **{row['Edge %']}%**\n\n"
 
     payload = {
         "content": message,

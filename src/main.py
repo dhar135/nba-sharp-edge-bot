@@ -6,6 +6,7 @@ from engine import calculate_all_edges
 from notifier import send_discord_alert
 from dotenv import load_dotenv
 from db import init_db, log_predictions
+from constants import SUPPORTED_STATS
 
 load_dotenv()
 
@@ -93,12 +94,11 @@ def parse_prizepicks_json(json_data):
         if odds_type != 'standard':
             continue
         
-        target_stats = ["Points", "Rebounds", "Assists", "Pts+Rebs+Asts"]
-        if stat_type in target_stats:
+        if stat_type in SUPPORTED_STATS:
             nba_projections.append({
                 "Player": player_name,
-                "Team": player_team,     # NEW
-                "Matchup": matchup,      # NEW
+                "Team": player_team,
+                "Matchup": matchup,
                 "Stat": stat_type,
                 "Line": line_score,
                 "Game Date": game_date

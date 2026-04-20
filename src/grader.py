@@ -7,6 +7,7 @@ import time
 from nba_fetcher import get_player_gamelog
 from nba_api.stats.static import teams
 from nba_api.stats.endpoints import scoreboardv3
+from constants import calculate_actual
 
 DB_NAME = "sharp_edge.db"
 
@@ -117,20 +118,7 @@ def grade_pending_bets():
                 actual = 0.0
                 voids += 1
             else:
-                pts = float(game_row.iloc[0]['PTS'])
-                reb = float(game_row.iloc[0]['REB'])
-                ast = float(game_row.iloc[0]['AST'])
-                
-                if stat_type == "Points":
-                    actual = pts
-                elif stat_type == "Rebounds":
-                    actual = reb
-                elif stat_type == "Assists":
-                    actual = ast
-                elif stat_type == "Pts+Rebs+Asts":
-                    actual = pts + reb + ast
-                else:
-                    actual = 0.0
+                actual = calculate_actual(stat_type, game_row)
 
                 if actual == line:
                     status = "PUSH"
