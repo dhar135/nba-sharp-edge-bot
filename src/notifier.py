@@ -2,10 +2,11 @@
 import requests
 import json
 
+# Define our two buckets
+CORE_STATS = ["Points", "Rebounds", "Assists", "Pts+Rebs+Asts", "Pts+Rebs", "Pts+Asts", "Rebs+Asts"]
+MICRO_STATS = ["3-PT Made", "Blocked Shots", "Steals", "Turnovers", "Blks+Stls"]
+
 def send_discord_alert(df, webhook_url):
-    """
-    Formats the top edges and pushes a notification to Discord.
-    """
     if df.empty:
         return
         
@@ -18,25 +19,34 @@ def send_discord_alert(df, webhook_url):
         print("[-] No premium plays (>30% edge) found. Skipping alert.")
         return
 
-    # 2. Sort by the highest absolute edge percentage
     qualified_plays['Abs Edge'] = qualified_plays['Edge %'].abs()
-    premium_plays = qualified_plays.sort_values(by='Abs Edge', ascending=False).head(5)
+    
+    # 2. SEGMENT THE BOARD
+    core_df = qualified_plays[qualified_plays['Stat'].isin(CORE_STATS)].sort_values(by='Abs Edge', ascending=False).head(3)
+    micro_df = qualified_plays[qualified_plays['Stat'].isin(MICRO_STATS)].sort_values(by='Abs Edge', ascending=False).head(3)
 
     # Format the message
-    message = "🚨 **SHARP EDGE ALERT** 🚨\n\n"
+    message = "🚨 **SHARP EDGE ALERT** 🚨\n"
     
-    for index, row in premium_plays.iterrows():
-        emoji = "📈" if row['Play'] == "OVER" else "📉"
+    def format_rows(segment_df):
+        msg = ""
+        for index, row in segment_df.iterrows():
+            emoji = "📈" if row['Play'] == "OVER" else "📉"
+            diff_str = f"+{row['Diff']}" if row['Diff'] > 0 else f"{row['Diff']}"
+            msg += f"**{row['Player']}** ({row['Team']}) | {row['Stat']}\n"
+            msg += f"> 🥊 Matchup: {row['Matchup']}\n"
+            msg += f"> 🎯 Line: **{row['PP Line']}** | Play: {emoji} **{row['Play']}**\n"
+            msg += f"> 📊 15g Med: **{row['15g Median']}** | 5g Med: **{row['5g Median']}** | Avg: {row['15g Avg']}\n"
+            msg += f"> ⚖️ Diff: {diff_str} | Edge: **{row['Edge %']}%**\n\n"
+        return msg
+
+    if not core_df.empty:
+        message += "\n🔥 **TOP CORE PLAYS (PTS/REB/AST)** 🔥\n"
+        message += format_rows(core_df)
         
-        # Add a plus sign to positive differences for clean reading
-        diff_str = f"+{row['Diff']}" if row['Diff'] > 0 else f"{row['Diff']}"
-        
-        # Build the contextual block
-        message += f"**{row['Player']}** ({row['Team']}) | {row['Stat']}\n"
-        message += f"> 🥊 Matchup: {row['Matchup']}\n"
-        message += f"> 🎯 Line: **{row['PP Line']}** | Play: {emoji} **{row['Play']}**\n"
-        message += f"> 📊 15g Med: **{row['15g Median']}** | 5g Med: **{row['5g Median']}** | Avg: {row['15g Avg']}\n"
-        message += f"> ⚖️ Diff: {diff_str} | Edge: **{row['Edge %']}%**\n\n"
+    if not micro_df.empty:
+        message += "🛡️ **TOP MICRO PLAYS (DEF/3PT)** 🛡️\n"
+        message += format_rows(micro_df)
 
     payload = {
         "content": message,
