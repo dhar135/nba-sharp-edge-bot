@@ -1,87 +1,102 @@
 # src/engine.py
 import pandas as pd
-from nba_fetcher import get_player_gamelog
+from nba_fetcher import get_league_gamelog
 from constants import SUPPORTED_STATS, STAT_MAPPING
 
 def calculate_all_edges(pp_df, sample_size=15, edge_threshold=15.0):
-    """
-    Compares PrizePicks lines to the player's true median across multiple stats.
-    Only returns edges that exceed the defined threshold.
-    """
-    print("\n[*] Booting up Math Engine for full board analysis...")
+    print(f"\n[*] Booting up Math Engine for full board analysis...")
     
-    # Filter the board to only include stats we support
-    processable_board = pp_df[pp_df['Stat'].isin(SUPPORTED_STATS)].copy()
+    supported_stats = [
+        "Points", "Rebounds", "Assists", "Pts+Rebs+Asts",
+        "3-PT Made", "Blocked Shots", "Steals", "Turnovers",
+        "Blks+Stls", "Pts+Rebs", "Pts+Asts", "Rebs+Asts"
+    ]
     
-    # OPTIMIZATION: Get unique players to avoid duplicate API calls
-    players_to_check = processable_board['Player'].unique()
-    print(f"[*] Found {len(players_to_check)} unique players. Fetching logs (this takes ~1-2 minutes)...")
+    player_props = pp_df[pp_df['Stat'].isin(supported_stats)].copy()
     
+    if player_props.empty:
+        print("[-] No supported props found in the current PrizePicks board.")
+        return pd.DataFrame()
+
     results = []
     
-    for player in players_to_check:
-        # Get all PrizePicks props for this specific player
-        player_props = processable_board[processable_board['Player'] == player]
+    # 1. FETCH ONCE (The God-Call)
+    league_df = get_league_gamelog()
+    if league_df is None or league_df.empty:
+        print("[!] Cannot proceed without league game logs.")
+        return pd.DataFrame()
+
+    unique_players = player_props['Player'].unique()
+    print(f"[*] Analyzing {len(unique_players)} players in memory... (This will be fast)")
+
+    # 2. PROCESS IN MEMORY
+    for index, row in player_props.iterrows():
+        player = row['Player']
+        stat_type = row['Stat']
+        pp_line = row['Line']
+        game_date = row['Game Date']
         
-        # Fetch NBA data exactly ONCE per player
-        df = get_player_gamelog(player)
+        # Slice the massive dataframe to just this player
+        player_logs = league_df[league_df['PLAYER_NAME'] == player]
         
-        if df is None or df.empty:
-            continue
+        # Safety check: Do they have enough games played this season?
+        if player_logs.empty or len(player_logs) < 5:
+            continue 
             
-        recent_games = df.head(sample_size).copy()
+        recent_games = player_logs.head(sample_size).copy()
         
-        # Pre-calculate combo stats needed for PrizePicks props
-        recent_games['PRA'] = recent_games['PTS'] + recent_games['REB'] + recent_games['AST']
-        recent_games['PR'] = recent_games['PTS'] + recent_games['REB']
-        recent_games['PA'] = recent_games['PTS'] + recent_games['AST']
-        recent_games['RA'] = recent_games['REB'] + recent_games['AST']
-        recent_games['BS'] = recent_games['BLK'] + recent_games['STL']
+        # Map the PrizePicks string to the NBA DataFrame column
+        if stat_type == "Pts+Rebs+Asts": calc_col = "PRA"
+        elif stat_type == "Points": calc_col = "PTS"
+        elif stat_type == "Rebounds": calc_col = "REB"
+        elif stat_type == "Assists": calc_col = "AST"
+        elif stat_type == "3-PT Made": calc_col = "FG3M"
+        elif stat_type == "Blocked Shots": calc_col = "BLK"
+        elif stat_type == "Steals": calc_col = "STL"
+        elif stat_type == "Turnovers": calc_col = "TOV"
+        elif stat_type == "Blks+Stls": calc_col = "BS"
+        elif stat_type == "Pts+Rebs": calc_col = "PR"
+        elif stat_type == "Pts+Asts": calc_col = "PA"
+        elif stat_type == "Rebs+Asts": calc_col = "RA"
+        else: continue 
         
-        # Loop through each of the player's lines and calculate the edge
-        for index, row in player_props.iterrows():
-            stat_type = row['Stat']
-            pp_line = row['Line']
-            game_date = row['Game Date'] # NEW: Extract from row
+        # CALCULATE LONG-TERM VS SHORT-TERM
+        true_median_15 = recent_games[calc_col].median()
+        true_mean_15 = recent_games[calc_col].mean()
+        true_median_5 = recent_games[calc_col].head(5).median()
+        
+        raw_diff = true_median_15 - pp_line
+        edge_percent = (raw_diff / pp_line) * 100
+        play = "OVER" if raw_diff > 0 else "UNDER"
+        
+        # === THE TREND FILTER ===
+        if play == "UNDER" and true_median_5 > (true_median_15 * 1.25):
+            continue 
             
-            # Map the PrizePicks string to our Pandas column
-            calc_col = STAT_MAPPING.get(stat_type)
-            if not calc_col:
-                continue 
+        if play == "OVER" and true_median_5 < (true_median_15 * 0.75):
+            continue 
+        
+        if abs(edge_percent) >= edge_threshold:
+            results.append({
+                "Player": player,
+                "Team": row['Team'],
+                "Matchup": row['Matchup'],
+                "Stat": stat_type,
+                "PP Line": pp_line,
+                "Game Date": game_date,
+                "15g Median": true_median_15,
+                "5g Median": true_median_5,
+                "15g Avg": round(true_mean_15, 1),
+                "Diff": raw_diff,
+                "Edge %": round(edge_percent, 2),
+                "Play": play
+            })
             
-            # CALCULATE LONG-TERM VS SHORT-TERM
-            true_median_15 = recent_games[calc_col].median()
-            true_mean_15 = recent_games[calc_col].mean()
-            true_median_5 = recent_games[calc_col].head(5).median() # NEW: Short-term trend
-            
-            raw_diff = true_median_15 - pp_line
-            edge_percent = (raw_diff / pp_line) * 100
-            play = "OVER" if raw_diff > 0 else "UNDER"
-            
-            # === THE TREND FILTER ===
-            # Protect against "Heaters" (Bot says UNDER, but player has been crushing it recently)
-            if play == "UNDER" and true_median_5 > (true_median_15 * 1.25):
-                continue # Skip the trap
-                
-            # Protect against "Injuries/Slumps" (Bot says OVER, but player has been terrible/limited recently)
-            if play == "OVER" and true_median_5 < (true_median_15 * 0.75):
-                continue # Skip the trap
-            
-            # FILTER: Only save the play if the edge is massive
-            if abs(edge_percent) >= edge_threshold:
-                results.append({
-                    "Player": player,
-                    "Team": row['Team'],          # NEW
-                    "Matchup": row['Matchup'],    # NEW
-                    "Stat": stat_type,
-                    "PP Line": pp_line,
-                    "Game Date": game_date,
-                    "15g Median": true_median_15,
-                    "5g Median": true_median_5, # NEW: Pass down the pipeline
-                    "15g Avg": round(true_mean_15, 1),
-                    "Diff": raw_diff,
-                    "Edge %": round(edge_percent, 2),
-                    "Play": "OVER" if raw_diff > 0 else "UNDER"
-                })
-                
-    return pd.DataFrame(results)
+    results_df = pd.DataFrame(results)
+    
+    if not results_df.empty:
+        results_df['Abs Edge'] = results_df['Edge %'].abs()
+        results_df = results_df.sort_values(by='Abs Edge', ascending=False)
+        results_df = results_df.drop(columns=['Abs Edge'])
+        
+    return results_df

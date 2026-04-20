@@ -1,66 +1,65 @@
 # src/grader.py
-import os
 import sqlite3
 import pandas as pd
 from datetime import datetime, timedelta
 import time
-from nba_fetcher import get_player_gamelog
+import os
+from nba_fetcher import get_league_gamelog
 from nba_api.stats.static import teams
 from nba_api.stats.endpoints import scoreboardv3
-from constants import calculate_actual
 
 DB_NAME = "sharp_edge.db"
-
-# 1. OPTIMIZATION: Build a static dictionary of Team Abbreviation -> Team ID
-# This prevents us from having to ping the NBA API to find out who a player plays for.
 NBA_TEAMS = teams.get_teams()
 TEAM_DICT = {t['abbreviation']: t['id'] for t in NBA_TEAMS}
 
-def is_game_final(target_date_str, team_id):
-    """Checks the NBA scoreboard to see if the team's game on this date is FINAL."""
-    try:
-        board = scoreboardv3.ScoreboardV3(game_date=target_date_str)
-        
-        # 1. Fetch the specific dataframes we need
-        lines_df = board.line_score.get_data_frame()
-        headers_df = board.game_header.get_data_frame()
-        
-        # 2. Find the team's row in the LineScore table
-        team_row = lines_df[lines_df['teamId'] == team_id]
-        
-        if team_row.empty:
-            return False, "NO_GAME"
-            
-        # 3. Extract the gameId for that team's game
-        target_game_id = team_row.iloc[0]['gameId']
-        
-        # 4. Look up that specific game in the GameHeader table
-        game_row = headers_df[headers_df['gameId'] == target_game_id]
-        
-        if game_row.empty:
-            return False, "NO_GAME"
-            
-        # 5. Extract the status (1 = PRE_GAME, 2 = LIVE, 3 = FINAL)
-        status = game_row.iloc[0]['gameStatus']
-        
-        if status == 3:
-            return True, "FINAL"
-        elif status == 2:
-            return False, "LIVE"
-        else:
-            return False, "PRE_GAME"
-            
-    except Exception as e:
-        print(f"Error checking game status: {e}")
+# NEW: Cache the scoreboard so we don't fetch the same date 20 times
+SCOREBOARD_CACHE = {}
+
+def get_game_status(target_date_str, team_id):
+    """Fetches game status using an in-memory cache to prevent rate limits."""
+    if target_date_str not in SCOREBOARD_CACHE:
+        try:
+            time.sleep(0.5) # Polite buffer for the API
+            board = scoreboardv3.ScoreboardV3(game_date=target_date_str)
+            lines_df = board.line_score.get_data_frame()
+            headers_df = board.game_header.get_data_frame()
+            SCOREBOARD_CACHE[target_date_str] = (lines_df, headers_df)
+        except Exception as e:
+            print(f"Error fetching scoreboard for {target_date_str}: {e}")
+            SCOREBOARD_CACHE[target_date_str] = (pd.DataFrame(), pd.DataFrame())
+
+    lines_df, headers_df = SCOREBOARD_CACHE[target_date_str]
+    
+    if lines_df.empty or headers_df.empty:
         return False, "ERROR"
+        
+    team_row = lines_df[lines_df['teamId'] == team_id]
+    
+    if team_row.empty:
+        return False, "NO_GAME"
+        
+    target_game_id = team_row.iloc[0]['gameId']
+    game_row = headers_df[headers_df['gameId'] == target_game_id]
+    
+    if game_row.empty:
+        return False, "NO_GAME"
+        
+    status = game_row.iloc[0]['gameStatus']
+    
+    if status == 3:
+        return True, "FINAL"
+    elif status == 2:
+        return False, "LIVE"
+    else:
+        return False, "PRE_GAME"
 
 def grade_pending_bets():
-    print("[*] Booting up the Smart Grader (State-Aware)...")
+    print("[*] Booting up the Smart Grader (God-Call Optimized)...")
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    # NEW: Fetch game_date from the DB
-    cursor.execute("SELECT id, date, game_date, player, stat_type, line, play FROM predictions WHERE status = 'PENDING'")
+    # We now fetch the 'team' directly from the DB to skip API lookups!
+    cursor.execute("SELECT id, date, game_date, player, team, stat_type, line, play FROM predictions WHERE status = 'PENDING'")
     pending_bets = cursor.fetchall()
 
     if not pending_bets:
@@ -68,47 +67,36 @@ def grade_pending_bets():
         conn.close()
         return
 
-    print(f"[*] Found {len(pending_bets)} pending bets. Verifying game statuses...\n")
+    print(f"[*] Found {len(pending_bets)} pending bets. Fetching League-Wide Game Log...\n")
+
+    # 1. THE GOD CALL
+    league_df = get_league_gamelog()
+    if league_df is not None and not league_df.empty:
+        league_df['Parsed_Date'] = pd.to_datetime(league_df['GAME_DATE']).dt.strftime('%Y-%m-%d')
+    else:
+        print("[!] Could not fetch league game logs. Exiting grader.")
+        conn.close()
+        return
 
     wins, losses, pushes, voids, skipped = 0, 0, 0, 0, 0
     today_date = datetime.now().strftime("%Y-%m-%d")
-
-    unique_players = list(set([bet[3] for bet in pending_bets]))
-    player_logs = {}
-    team_mapping = {}
-
-    # NEW: Create a list to track everything we grade today for the Discord alert
     graded_results = []
 
-    # Map players to teams using their game logs
-    for player in unique_players:
-        df = get_player_gamelog(player)
-        
-        if df is not None and not df.empty:
-            df['Parsed_Date'] = pd.to_datetime(df['GAME_DATE']).dt.strftime('%Y-%m-%d')
-            player_logs[player] = df
-            
-            recent_matchup = df.iloc[0]['MATCHUP']
-            team_abbr = recent_matchup[:3]
-            team_mapping[player] = TEAM_DICT.get(team_abbr)
-        else:
-            team_mapping[player] = None
-            
-        time.sleep(1.2) 
-
-    # Evaluate each bet
+    # 2. Evaluate each bet entirely in memory!
     for bet in pending_bets:
-        bet_id, bet_date, game_date, player, stat_type, line, play = bet
-        team_id = team_mapping.get(player)
+        bet_id, bet_date, game_date, player, team, stat_type, line, play = bet
         
         target_game_date = game_date if game_date else bet_date
         
+        # Instantly resolve the Team ID from our static dictionary
+        team_id = TEAM_DICT.get(team)
+
         if not team_id:
-            print(f"⚠️ {player} | Could not fetch valid game data. Leaving PENDING.")
+            print(f"⚠️ {player} | Could not resolve Team ID for '{team}'. Leaving PENDING.")
             skipped += 1
             continue
 
-        is_final, game_state = is_game_final(target_game_date, team_id)
+        is_final, game_state = get_game_status(target_game_date, team_id)
             
         if not is_final:
             if game_state in ["LIVE", "PRE_GAME"]:
@@ -125,15 +113,36 @@ def grade_pending_bets():
                     skipped += 1
                     continue
         else:
-            df = player_logs[player]
-            game_row = df[df['Parsed_Date'] == target_game_date]
+            # Game is final, slice the specific player's box score from memory
+            player_logs = league_df[league_df['PLAYER_NAME'] == player]
+            game_row = player_logs[player_logs['Parsed_Date'] == target_game_date]
             
             if game_row.empty:
-                status = "VOID (DNP)"
+                status = "VOID (DNP)" 
                 actual = 0.0
                 voids += 1
             else:
-                actual = calculate_actual(stat_type, game_row)
+                pts = float(game_row.iloc[0]['PTS'])
+                reb = float(game_row.iloc[0]['REB'])
+                ast = float(game_row.iloc[0]['AST'])
+                fg3m = float(game_row.iloc[0]['FG3M'])
+                blk = float(game_row.iloc[0]['BLK'])
+                stl = float(game_row.iloc[0]['STL'])
+                tov = float(game_row.iloc[0]['TOV'])
+                
+                if stat_type == "Points": actual = pts
+                elif stat_type == "Rebounds": actual = reb
+                elif stat_type == "Assists": actual = ast
+                elif stat_type == "Pts+Rebs+Asts": actual = pts + reb + ast
+                elif stat_type == "3-PT Made": actual = fg3m
+                elif stat_type == "Blocked Shots": actual = blk
+                elif stat_type == "Steals": actual = stl
+                elif stat_type == "Turnovers": actual = tov
+                elif stat_type == "Blks+Stls": actual = blk + stl
+                elif stat_type == "Pts+Rebs": actual = pts + reb
+                elif stat_type == "Pts+Asts": actual = pts + ast
+                elif stat_type == "Rebs+Asts": actual = reb + ast
+                else: actual = 0.0
 
                 if actual == line:
                     status = "PUSH"
@@ -151,15 +160,15 @@ def grade_pending_bets():
         emoji = "✅" if status == "WIN" else "❌" if status == "LOSS" else "🔄"
         print(f"{emoji} {player} | {stat_type} | {play} {line} -> Actual: {actual} ({status})")
         
-        # NEW: Append to our Discord tracking list
-        graded_results.append({
-            "player": player,
-            "stat": stat_type,
-            "play": play,
-            "line": line,
-            "actual": actual,
-            "status": status
-        })
+        if status not in ["VOID (DNP)"]:
+            graded_results.append({
+                "player": player,
+                "stat": stat_type,
+                "play": play,
+                "line": line,
+                "actual": actual,
+                "status": status
+            })
 
     conn.commit()
     conn.close()
@@ -176,7 +185,6 @@ def grade_pending_bets():
     if total_graded > 0:
          print(f"Win Rate: {win_rate:.1f}%")
          
-    # NEW: Send the Discord Alert
     webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
     if webhook_url and graded_results:
         summary = {
@@ -186,13 +194,13 @@ def grade_pending_bets():
             "voids": voids,
             "win_rate": win_rate
         }
-        from notifier import send_grading_report
-        send_grading_report(graded_results, summary, webhook_url)
+        try:
+            from notifier import send_grading_report
+            send_grading_report(graded_results, summary, webhook_url)
+        except Exception as e:
+            print(f"[-] Could not send Discord report: {e}")
 
-
-# NEW: Load environment variables before executing
 if __name__ == "__main__":
-    import os
     from dotenv import load_dotenv
     load_dotenv()
     grade_pending_bets()
