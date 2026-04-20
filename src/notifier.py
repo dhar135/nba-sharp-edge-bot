@@ -5,10 +5,12 @@ import os
 import pandas as pd
 from google import genai
 from google.genai import types
+from utils import logger, timer
 
 CORE_STATS = ["Points", "Rebounds", "Assists", "Pts+Rebs+Asts", "Pts+Rebs", "Pts+Asts", "Rebs+Asts"]
 MICRO_STATS = ["3-PT Made", "Blocked Shots", "Steals", "Turnovers", "Blks+Stls"]
 
+@timer
 def get_ai_analysis(plays_df):
     """Feeds top plays to Gemini 3.1 Flash-Lite for live news-aware insights."""
     api_key = os.getenv("GEMINI_API_KEY")
@@ -28,7 +30,7 @@ def get_ai_analysis(plays_df):
         prompt += f"- {row['Player']} ({row['Team']}) vs {row['Matchup']}. Bet: {row['Play']} {row['PP Line']} {row['Stat']}.\n"
 
     try:
-        print("[*] Contacting Gemini 3.1 Flash-Lite (Search Enabled)...")
+        logger.info("[*] Contacting Gemini 3.1 Flash-Lite (Search Enabled)...")
         
         # Using the new model and the thinking_level parameter from your docs
         response = client.models.generate_content(
@@ -42,10 +44,10 @@ def get_ai_analysis(plays_df):
         return (response.text or "").strip()
     
     except Exception as e:
-        print(f"[!] AI Analysis failed: {e}")
+        logger.info(f"[!] AI Analysis failed: {e}")
         # Graceful fallback: If search or Flash-Lite fails, try standard logic without search
         if "429" in str(e):
-             print("[!] Quota exceeded. Attempting fallback without search...")
+             logger.info("[!] Quota exceeded. Attempting fallback without search...")
              try:
                  response = client.models.generate_content(
                      model="gemini-3.1-flash-lite-preview",
@@ -55,11 +57,12 @@ def get_ai_analysis(plays_df):
              except: return ""
         return ""
 
+@timer
 def send_discord_alert(df, webhook_url):
     if df.empty:
         return
         
-    print("\n[*] Formatting and sending Discord alert (Embed Version)...")
+    logger.info("\n[*] Formatting and sending Discord alert (Embed Version)...")
     
     qualified_plays = df[df['Edge %'].abs() >= 30.0].copy()
     if qualified_plays.empty:
@@ -100,7 +103,7 @@ def send_discord_alert(df, webhook_url):
     }
     
     requests.post(webhook_url, data=json.dumps(payload), headers={'Content-Type': 'application/json'})
-    print("[+] Discord alert sent successfully!")
+    logger.info("[+] Discord alert sent successfully!")
 
 def send_grading_report(graded_results, summary, webhook_url):
     """
@@ -109,7 +112,7 @@ def send_grading_report(graded_results, summary, webhook_url):
     if not graded_results:
         return
 
-    print("\n[*] Formatting and sending grading report...")
+    logger.info("\n[*] Formatting and sending grading report...")
 
     # Build the message
     message = "📊 **GRADING REPORT** 📊\n\n"
@@ -135,8 +138,8 @@ def send_grading_report(graded_results, summary, webhook_url):
             headers={"Content-Type": "application/json"},
         )
         if response.status_code == 204:
-            print("[+] Grading report sent successfully!")
+            logger.info("[+] Grading report sent successfully!")
         else:
-            print(f"[!] Failed to send grading report. Status: {response.status_code}")
+            logger.info(f"[!] Failed to send grading report. Status: {response.status_code}")
     except Exception as e:
-        print(f"[!] Grading report webhook error: {e}")
+        logger.info(f"[!] Grading report webhook error: {e}")

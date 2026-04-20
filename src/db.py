@@ -2,6 +2,7 @@
 import sqlite3
 import pandas as pd
 from datetime import datetime
+from utils import logger, timer
 
 DB_NAME = "sharp_edge.db"
 
@@ -9,6 +10,7 @@ DB_NAME = "sharp_edge.db"
 CORE_STATS = ["Points", "Rebounds", "Assists", "Pts+Rebs+Asts", "Pts+Rebs", "Pts+Asts", "Rebs+Asts"]
 MICRO_STATS = ["3-PT Made", "Blocked Shots", "Steals", "Turnovers", "Blks+Stls"]
 
+@timer
 def init_db():
     """Creates the predictions table if it doesn't exist."""
     conn = sqlite3.connect(DB_NAME)
@@ -32,8 +34,9 @@ def init_db():
     ''')
     conn.commit()
     conn.close()
-    print("[*] Database initialized/verified successfully.")
+    logger.info("[*] Database initialized/verified successfully.")
 
+@timer
 def log_predictions(df):
     """Takes the segmented plays and logs them to the DB."""
     if df.empty:
@@ -81,4 +84,4 @@ def log_predictions(df):
     conn.close()
     
     if inserted_count > 0:
-        print(f"[+] Logged {inserted_count} new predictions to the database.")
+        logger.info(f"[+] Logged {inserted_count} new predictions to the database.")

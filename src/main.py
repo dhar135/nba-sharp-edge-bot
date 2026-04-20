@@ -8,11 +8,13 @@ from dotenv import load_dotenv
 from db import init_db, log_predictions
 from grader import grade_pending_bets
 from constants import SUPPORTED_STATS
+from utils import logger, timer
 
 load_dotenv()
 
+@timer
 def fetch_prizepicks_board():
-    print("[*] Attempting to fetch PrizePicks board via Cloudscraper...")
+    logger.info("[*] Attempting to fetch PrizePicks board via Cloudscraper...")
     url = "https://api.prizepicks.com/projections"
     
     # We create a scraper object that acts exactly like 'requests' but spoofs TLS/Browser signatures
@@ -28,20 +30,21 @@ def fetch_prizepicks_board():
     try:
         response = scraper.get(url, headers=headers)
         if response.status_code == 200:
-            print("[+] Successfully fetched PrizePicks board.")
+            logger.info("[+] Successfully fetched PrizePicks board.")
             return response.json()
         else:
-            print(f"[!] Failed to fetch PrizePicks. Status Code: {response.status_code}")
+            logger.info(f"[!] Failed to fetch PrizePicks. Status Code: {response.status_code}")
             return None
     except Exception as e:
-        print(f"[!] Request error: {e}")
+        logger.info(f"[!] Request error: {e}")
         return None
 
+@timer
 def parse_prizepicks_json(json_data):
     """
     Parses the massive JSON payload into a clean Pandas DataFrame containing only NBA props.
     """
-    print("[*] Parsing JSON payload...")
+    logger.info("[*] Parsing JSON payload...")
     
     # 1. Build lookup dictionaries for players and leagues
     players = {}
@@ -114,29 +117,29 @@ if __name__ == "__main__":
     # 1. Initialize DB
     init_db()
     
-    print("=== Sharp Edge MVP Initialization ===\n")
+    logger.info("=== Sharp Edge MVP Initialization ===\n")
     
     pp_data = fetch_prizepicks_board()
     
     if pp_data:
         clean_board = parse_prizepicks_json(pp_data)
-        print(f"\n[+] Extracted {len(clean_board)} STANDARD NBA lines.")
+        logger.info(f"\n[+] Extracted {len(clean_board)} STANDARD NBA lines.")
         
         edges_df = calculate_all_edges(clean_board, sample_size=15, edge_threshold=15.0)
         
-        print("\n=== THE EDGE REPORT (>15% Discrepancies) ===")
+        logger.info("\n=== THE EDGE REPORT (>15% Discrepancies) ===")
         if edges_df.empty:
-            print("No massive edges found on the board right now. Market is tight.")
+            logger.info("No massive edges found on the board right now. Market is tight.")
         else:
             edges_df['Abs Diff'] = edges_df['Diff'].abs()
             edges_df = edges_df.sort_values(by='Abs Diff', ascending=False).drop(columns=['Abs Diff'])
-            print(edges_df.to_string(index=False))
+            logger.info(edges_df.to_string(index=False))
             
             # Send Discord Alert
             if DISCORD_WEBHOOK:
                 send_discord_alert(edges_df, DISCORD_WEBHOOK)
             else:
-                print("[!] Discord alert skipped. No webhook URL found.")
+                logger.info("[!] Discord alert skipped. No webhook URL found.")
                 
             # 2. Log to Database
             log_predictions(edges_df)

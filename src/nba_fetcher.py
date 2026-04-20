@@ -4,26 +4,28 @@ from nba_api.stats.static import players
 from nba_api.stats.endpoints import playergamelog
 import time
 from nba_api.stats.endpoints import leaguegamelog
+from utils import logger, timer
 
 
+@timer
 def get_player_gamelog(player_name, season='2025-26'):
     """
     Fetches the game log for a specific player for the given season.
     """
-    print(f"[*] Fetching NBA ID for: {player_name}")
+    logger.info(f"[*] Fetching NBA ID for: {player_name}")
     
     # 1. Find the player dictionary
     active_players = players.get_players()
     player_dict = [p for p in active_players if p['full_name'].lower() == player_name.lower()]
     
     if not player_dict:
-        print(f"[!] Error: Could not find player {player_name}")
+        logger.info(f"[!] Error: Could not find player {player_name}")
         return None
         
     player_id = player_dict[0]['id']
     
     # 2. Fetch the game log
-    print(f"[*] Fetching game logs for ID: {player_id}")
+    logger.info(f"[*] Fetching game logs for ID: {player_id}")
     try:
         # Note: For playoffs, you'd eventually pass SeasonType='Playoffs'
         gamelog = playergamelog.PlayerGameLog(player_id=player_id, season=season)
@@ -34,16 +36,17 @@ def get_player_gamelog(player_name, season='2025-26'):
         
         return df
     except Exception as e:
-        print(f"[!] Failed to fetch data from NBA API: {e}")
+        logger.info(f"[!] Failed to fetch data from NBA API: {e}")
         return None
     
 
+@timer
 def get_league_gamelog(season="2025-26"):
     """
     The God-Call. Fetches every single box score for every player in the NBA 
     for the current season in one massive DataFrame.
     """
-    print(f"\n[*] Fetching God-Level League Game Log for {season}...")
+    logger.info(f"\n[*] Fetching God-Level League Game Log for {season}...")
     try:
         # player_or_team_abbreviation='P' tells it to get player logs instead of team logs
         log = leaguegamelog.LeagueGameLog(player_or_team_abbreviation='P', season=season)
@@ -63,9 +66,9 @@ def get_league_gamelog(season="2025-26"):
         df['RA'] = df['REB'] + df['AST']
         df['BS'] = df['BLK'] + df['STL']
         
-        print(f"[+] Successfully loaded {len(df)} box scores into memory.")
+        logger.info(f"[+] Successfully loaded {len(df)} box scores into memory.")
         return df
         
     except Exception as e:
-        print(f"[!] Failed to fetch League Game Log: {e}")
+        logger.info(f"[!] Failed to fetch League Game Log: {e}")
         return None

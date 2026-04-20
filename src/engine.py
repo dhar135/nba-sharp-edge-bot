@@ -2,9 +2,11 @@
 import pandas as pd
 from nba_fetcher import get_league_gamelog
 from constants import SUPPORTED_STATS, STAT_MAPPING
+from utils import logger, timer
 
+@timer
 def calculate_all_edges(pp_df, sample_size=15, edge_threshold=15.0):
-    print(f"\n[*] Booting up Math Engine for full board analysis...")
+    logger.info(f"\n[*] Booting up Math Engine for full board analysis...")
     
     supported_stats = [
         "Points", "Rebounds", "Assists", "Pts+Rebs+Asts",
@@ -15,7 +17,7 @@ def calculate_all_edges(pp_df, sample_size=15, edge_threshold=15.0):
     player_props = pp_df[pp_df['Stat'].isin(supported_stats)].copy()
     
     if player_props.empty:
-        print("[-] No supported props found in the current PrizePicks board.")
+        logger.info("[-] No supported props found in the current PrizePicks board.")
         return pd.DataFrame()
 
     results = []
@@ -23,11 +25,11 @@ def calculate_all_edges(pp_df, sample_size=15, edge_threshold=15.0):
     # 1. FETCH ONCE (The God-Call)
     league_df = get_league_gamelog()
     if league_df is None or league_df.empty:
-        print("[!] Cannot proceed without league game logs.")
+        logger.info("[!] Cannot proceed without league game logs.")
         return pd.DataFrame()
 
     unique_players = player_props['Player'].unique()
-    print(f"[*] Analyzing {len(unique_players)} players in memory... (This will be fast)")
+    logger.info(f"[*] Analyzing {len(unique_players)} players in memory... (This will be fast)")
 
     # 2. PROCESS IN MEMORY
     for index, row in player_props.iterrows():

@@ -7,6 +7,7 @@ import os
 from nba_fetcher import get_league_gamelog
 from nba_api.stats.static import teams
 from nba_api.stats.endpoints import scoreboardv3
+from utils import logger, timer
 
 DB_NAME = "sharp_edge.db"
 NBA_TEAMS = teams.get_teams()
@@ -15,6 +16,7 @@ TEAM_DICT = {t['abbreviation']: t['id'] for t in NBA_TEAMS}
 # NEW: Cache the scoreboard so we don't fetch the same date 20 times
 SCOREBOARD_CACHE = {}
 
+@timer
 def get_game_status(target_date_str, team_id):
     """Fetches game status using an in-memory cache to prevent rate limits."""
     if target_date_str not in SCOREBOARD_CACHE:
@@ -25,7 +27,7 @@ def get_game_status(target_date_str, team_id):
             headers_df = board.game_header.get_data_frame()
             SCOREBOARD_CACHE[target_date_str] = (lines_df, headers_df)
         except Exception as e:
-            print(f"Error fetching scoreboard for {target_date_str}: {e}")
+            logger.info(f"Error fetching scoreboard for {target_date_str}: {e}")
             SCOREBOARD_CACHE[target_date_str] = (pd.DataFrame(), pd.DataFrame())
 
     lines_df, headers_df = SCOREBOARD_CACHE[target_date_str]
@@ -53,8 +55,9 @@ def get_game_status(target_date_str, team_id):
     else:
         return False, "PRE_GAME"
 
+@timer
 def grade_pending_bets():
-    print("[*] Booting up the Smart Grader (God-Call Optimized)...")
+    logger.info("[*] Booting up the Smart Grader (God-Call Optimized)...")
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -63,18 +66,18 @@ def grade_pending_bets():
     pending_bets = cursor.fetchall()
 
     if not pending_bets:
-        print("[-] No pending bets to grade. System is up to date.")
+        logger.info("[-] No pending bets to grade. System is up to date.")
         conn.close()
         return
 
-    print(f"[*] Found {len(pending_bets)} pending bets. Fetching League-Wide Game Log...\n")
+    logger.info(f"[*] Found {len(pending_bets)} pending bets. Fetching League-Wide Game Log...\n")
 
     # 1. THE GOD CALL
     league_df = get_league_gamelog()
     if league_df is not None and not league_df.empty:
         league_df['Parsed_Date'] = pd.to_datetime(league_df['GAME_DATE']).dt.strftime('%Y-%m-%d')
     else:
-        print("[!] Could not fetch league game logs. Exiting grader.")
+        logger.info("[!] Could not fetch league game logs. Exiting grader.")
         conn.close()
         return
 
@@ -92,7 +95,7 @@ def grade_pending_bets():
         team_id = TEAM_DICT.get(team)
 
         if not team_id:
-            print(f"⚠️ {player} | Could not resolve Team ID for '{team}'. Leaving PENDING.")
+            logger.info(f"⚠️ {player} | Could not resolve Team ID for '{team}'. Leaving PENDING.")
             skipped += 1
             continue
 
@@ -100,7 +103,7 @@ def grade_pending_bets():
             
         if not is_final:
             if game_state in ["LIVE", "PRE_GAME"]:
-                print(f"⏳ {player} | {stat_type} | Game is {game_state}. Leaving as PENDING.")
+                logger.info(f"⏳ {player} | {stat_type} | Game is {game_state}. Leaving as PENDING.")
                 skipped += 1
                 continue
             else:
@@ -109,7 +112,7 @@ def grade_pending_bets():
                     actual = 0.0
                     voids += 1
                 else:
-                    print(f"⏳ {player} | {stat_type} | Game hasn't started yet. Leaving PENDING.")
+                    logger.info(f"⏳ {player} | {stat_type} | Game hasn't started yet. Leaving PENDING.")
                     skipped += 1
                     continue
         else:
@@ -158,7 +161,7 @@ def grade_pending_bets():
         cursor.execute('UPDATE predictions SET status = ?, actual_result = ? WHERE id = ?', (status, actual, bet_id))
         
         emoji = "✅" if status == "WIN" else "❌" if status == "LOSS" else "🔄"
-        print(f"{emoji} {player} | {stat_type} | {play} {line} -> Actual: {actual} ({status})")
+        logger.info(f"{emoji} {player} | {stat_type} | {play} {line} -> Actual: {actual} ({status})")
         
         if status not in ["VOID (DNP)"]:
             graded_results.append({
@@ -176,14 +179,14 @@ def grade_pending_bets():
     total_graded = wins + losses
     win_rate = (wins / total_graded) * 100 if total_graded > 0 else 0.0
     
-    print("\n=== DAILY GRADING REPORT ===")
-    print(f"Wins:    {wins}")
-    print(f"Losses:  {losses}")
-    print(f"Pushes:  {pushes}")
-    print(f"Voids:   {voids}")
-    print(f"Skipped: {skipped} (Games pending)")
+    logger.info("\n=== DAILY GRADING REPORT ===")
+    logger.info(f"Wins:    {wins}")
+    logger.info(f"Losses:  {losses}")
+    logger.info(f"Pushes:  {pushes}")
+    logger.info(f"Voids:   {voids}")
+    logger.info(f"Skipped: {skipped} (Games pending)")
     if total_graded > 0:
-         print(f"Win Rate: {win_rate:.1f}%")
+         logger.info(f"Win Rate: {win_rate:.1f}%")
          
     webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
     if webhook_url and graded_results:
@@ -198,7 +201,7 @@ def grade_pending_bets():
             from notifier import send_grading_report
             send_grading_report(graded_results, summary, webhook_url)
         except Exception as e:
-            print(f"[-] Could not send Discord report: {e}")
+            logger.info(f"[-] Could not send Discord report: {e}")
 
 if __name__ == "__main__":
     from dotenv import load_dotenv
