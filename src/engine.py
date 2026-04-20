@@ -147,8 +147,22 @@ def calculate_all_edges(pp_df, sample_size=15, edge_threshold=15.0):
     results_df = pd.DataFrame(results)
     
     if not results_df.empty:
+        # Sort by the largest discrepancies (Absolute Edge)
         results_df['Abs Edge'] = results_df['Edge %'].abs()
         results_df = results_df.sort_values(by='Abs Edge', ascending=False)
         results_df = results_df.drop(columns=['Abs Edge'])
+        
+        # Clean up the NaN values for non-Points props
+        if 'ML Prob' in results_df.columns:
+            results_df['ML Prob'] = results_df['ML Prob'].fillna("-")
+            
+        # === NEW: Export to CSV ===
+        out_dir = "data"
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+            
+        csv_path = os.path.join(out_dir, "daily_picks.csv")
+        results_df.to_csv(csv_path, index=False)
+        logger.info(f"[+] Exported {len(results_df)} plays to {csv_path} sorted by Edge %")
         
     return results_df

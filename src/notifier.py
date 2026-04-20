@@ -96,9 +96,10 @@ def send_discord_alert(df, webhook_url):
             
             # Format the ML Probability badge if this is a Points prop
             ml_badge = ""
-            if 'ML Prob' in row and pd.notna(row['ML Prob']):
-                # If it's an OVER play, show probability of OVER. If UNDER, show probability of UNDER (100 - over)
-                display_prob = row['ML Prob'] if row['Play'] == "OVER" else round(100 - row['ML Prob'], 1)
+            # Ensure 'ML Prob' exists, is not NaN, AND is not our "-" string
+            if 'ML Prob' in row and pd.notna(row['ML Prob']) and row['ML Prob'] != "-":
+                ml_prob = float(row['ML Prob'])
+                display_prob = ml_prob if row['Play'] == "OVER" else round(100 - ml_prob, 1)
                 ml_badge = f" | 🤖 **ML Conf: {display_prob}%**"
 
             msg += f"**{row['Player']}** ({row['Team']}) | {row['Stat']}\n"
@@ -130,7 +131,18 @@ def send_discord_alert(df, webhook_url):
         "username": "SharpEdge Bot"
     }
     
-    requests.post(webhook_url, data=json.dumps(payload), headers={'Content-Type': 'application/json'})
+    # Check if the CSV exists to attach it
+    csv_path = "data/daily_picks.csv"
+    if os.path.exists(csv_path):
+        with open(csv_path, "rb") as f:
+            files = {
+                "file": ("daily_picks.csv", f, "text/csv")
+            }
+            # When sending files, the embed must be sent as a payload_json string
+            requests.post(webhook_url, data={"payload_json": json.dumps(payload)}, files=files)
+    else:
+        # Fallback if no CSV
+        requests.post(webhook_url, data=json.dumps(payload), headers={'Content-Type': 'application/json'})
     logger.info("[+] Discord alert sent successfully!")
 
 def send_grading_report(graded_results, summary, webhook_url):
