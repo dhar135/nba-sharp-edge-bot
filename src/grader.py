@@ -20,14 +20,28 @@ def is_game_final(target_date_str, team_id):
     """Checks the NBA scoreboard to see if the team's game on this date is FINAL."""
     try:
         board = scoreboardv3.ScoreboardV3(game_date=target_date_str)
-        games_df = board.get_data_frames()[0]
         
-        team_game = games_df[(games_df['HOME_TEAM_ID'] == team_id) | (games_df['VISITOR_TEAM_ID'] == team_id)]
+        # 1. Fetch the specific dataframes we need
+        lines_df = board.line_score.get_data_frame()
+        headers_df = board.game_header.get_data_frame()
         
-        if team_game.empty:
+        # 2. Find the team's row in the LineScore table
+        team_row = lines_df[lines_df['teamId'] == team_id]
+        
+        if team_row.empty:
             return False, "NO_GAME"
             
-        status = team_game.iloc[0]['GAME_STATUS_ID']
+        # 3. Extract the gameId for that team's game
+        target_game_id = team_row.iloc[0]['gameId']
+        
+        # 4. Look up that specific game in the GameHeader table
+        game_row = headers_df[headers_df['gameId'] == target_game_id]
+        
+        if game_row.empty:
+            return False, "NO_GAME"
+            
+        # 5. Extract the status (1 = PRE_GAME, 2 = LIVE, 3 = FINAL)
+        status = game_row.iloc[0]['gameStatus']
         
         if status == 3:
             return True, "FINAL"
@@ -37,6 +51,7 @@ def is_game_final(target_date_str, team_id):
             return False, "PRE_GAME"
             
     except Exception as e:
+        print(f"Error checking game status: {e}")
         return False, "ERROR"
 
 def grade_pending_bets():

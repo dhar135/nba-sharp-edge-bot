@@ -5,20 +5,23 @@ from datetime import datetime
 
 DB_NAME = "sharp_edge.db"
 
+# Match the buckets from notifier.py
+CORE_STATS = ["Points", "Rebounds", "Assists", "Pts+Rebs+Asts", "Pts+Rebs", "Pts+Asts", "Rebs+Asts"]
+MICRO_STATS = ["3-PT Made", "Blocked Shots", "Steals", "Turnovers", "Blks+Stls"]
+
 def init_db():
     """Creates the predictions table if it doesn't exist."""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # We store the player, the stat, the line, and default the status to PENDING
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS predictions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             date TEXT,
             game_date TEXT,
             player TEXT,
-            team TEXT,          -- NEW
-            matchup TEXT,       -- NEW
+            team TEXT,
+            matchup TEXT,
             stat_type TEXT,
             line REAL,
             play TEXT,
@@ -29,10 +32,10 @@ def init_db():
     ''')
     conn.commit()
     conn.close()
-    print("[*] Database initialized successfully.")
+    print("[*] Database initialized/verified successfully.")
 
 def log_predictions(df):
-    """Takes the premium plays DataFrame and logs them to the DB."""
+    """Takes the segmented plays and logs them to the DB."""
     if df.empty:
         return
 
@@ -41,7 +44,6 @@ def log_predictions(df):
     
     today_date = datetime.now().strftime("%Y-%m-%d")
     
-    # 1. MATCH THE DISCORD LOGIC: Filter and sort by Absolute Edge %
     qualified_plays = df[df['Edge %'].abs() >= 30.0].copy()
     
     if qualified_plays.empty:
@@ -49,7 +51,14 @@ def log_predictions(df):
         return
         
     qualified_plays['Abs Edge'] = qualified_plays['Edge %'].abs()
-    premium_plays = qualified_plays.sort_values(by='Abs Edge', ascending=False).head(5)
+    
+    # 1. SEGMENT THE BOARD EXACTLY LIKE DISCORD
+    core_df = qualified_plays[qualified_plays['Stat'].isin(CORE_STATS)].sort_values(by='Abs Edge', ascending=False).head(3)
+    micro_df = qualified_plays[qualified_plays['Stat'].isin(MICRO_STATS)].sort_values(by='Abs Edge', ascending=False).head(3)
+    
+    # 2. COMBINE THE BUCKETS
+    # This guarantees we log the exact 6 plays that were sent to your phone
+    premium_plays = pd.concat([core_df, micro_df])
     
     inserted_count = 0
     for index, row in premium_plays.iterrows():
@@ -62,7 +71,6 @@ def log_predictions(df):
         exists = cursor.fetchone()[0]
         
         if not exists:
-            # NEW: Insert team and matchup
             cursor.execute('''
                 INSERT INTO predictions (date, game_date, player, team, matchup, stat_type, line, play, edge_percent, status)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')

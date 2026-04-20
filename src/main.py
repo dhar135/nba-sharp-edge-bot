@@ -6,6 +6,7 @@ from engine import calculate_all_edges
 from notifier import send_discord_alert
 from dotenv import load_dotenv
 from db import init_db, log_predictions
+from grader import grade_pending_bets
 from constants import SUPPORTED_STATS
 
 load_dotenv()
@@ -139,3 +140,6 @@ if __name__ == "__main__":
                 
             # 2. Log to Database
             log_predictions(edges_df)
+            
+            # 3. Grade any pending bets
+            grade_pending_bets()
