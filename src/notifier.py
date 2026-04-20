@@ -54,7 +54,9 @@ def get_ai_analysis(plays_df):
                      contents="Note: Avoid live search. " + prompt
                  )
                  return "⚠️ *News search unavailable (Quota). Analysis based on stats only.*\n\n" + (response.text or "").strip()
-             except: return ""
+             except Exception as fallback_error:
+                logger.info(f"[!] Fallback also failed: {fallback_error}")
+                return ""
         return ""
 
 @timer
