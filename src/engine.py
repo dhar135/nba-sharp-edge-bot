@@ -7,7 +7,7 @@ def calculate_all_edges(pp_df, sample_size=15, edge_threshold=15.0):
     Compares PrizePicks lines to the player's true median across multiple stats.
     Only returns edges that exceed the defined threshold.
     """
-    print(f"\n[*] Booting up Math Engine for full board analysis...")
+    print("\n[*] Booting up Math Engine for full board analysis...")
     
     # Define supported stats
     supported_stats = ["Points", "Rebounds", "Assists", "Pts+Rebs+Asts"]
@@ -40,6 +40,7 @@ def calculate_all_edges(pp_df, sample_size=15, edge_threshold=15.0):
         for index, row in player_props.iterrows():
             stat_type = row['Stat']
             pp_line = row['Line']
+            game_date = row['Game Date'] # NEW: Extract from row
             
             # Map the PrizePicks string to our Pandas column
             if stat_type == "Pts+Rebs+Asts":
@@ -63,8 +64,11 @@ def calculate_all_edges(pp_df, sample_size=15, edge_threshold=15.0):
             if abs(edge_percent) >= edge_threshold:
                 results.append({
                     "Player": player,
+                    "Team": row['Team'],          # NEW
+                    "Matchup": row['Matchup'],    # NEW
                     "Stat": stat_type,
                     "PP Line": pp_line,
+                    "Game Date": game_date,
                     "15g Median": true_median,
                     "15g Avg": round(true_mean, 1),
                     "Diff": raw_diff,

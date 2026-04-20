@@ -15,7 +15,10 @@ def init_db():
         CREATE TABLE IF NOT EXISTS predictions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             date TEXT,
+            game_date TEXT,
             player TEXT,
+            team TEXT,          -- NEW
+            matchup TEXT,       -- NEW
             stat_type TEXT,
             line REAL,
             play TEXT,
@@ -38,8 +41,15 @@ def log_predictions(df):
     
     today_date = datetime.now().strftime("%Y-%m-%d")
     
-    # Filter for the exact same premium plays we send to Discord (>30% edge)
-    premium_plays = df[df['Edge %'].abs() >= 30.0].head(5)
+    # 1. MATCH THE DISCORD LOGIC: Filter and sort by Absolute Edge %
+    qualified_plays = df[df['Edge %'].abs() >= 30.0].copy()
+    
+    if qualified_plays.empty:
+        conn.close()
+        return
+        
+    qualified_plays['Abs Edge'] = qualified_plays['Edge %'].abs()
+    premium_plays = qualified_plays.sort_values(by='Abs Edge', ascending=False).head(5)
     
     inserted_count = 0
     for index, row in premium_plays.iterrows():
@@ -52,10 +62,11 @@ def log_predictions(df):
         exists = cursor.fetchone()[0]
         
         if not exists:
+            # NEW: Insert team and matchup
             cursor.execute('''
-                INSERT INTO predictions (date, player, stat_type, line, play, edge_percent, status)
-                VALUES (?, ?, ?, ?, ?, ?, 'PENDING')
-            ''', (today_date, row['Player'], row['Stat'], row['PP Line'], row['Play'], row['Edge %']))
+                INSERT INTO predictions (date, game_date, player, team, matchup, stat_type, line, play, edge_percent, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
+            ''', (today_date, row['Game Date'], row['Player'], row['Team'], row['Matchup'], row['Stat'], row['PP Line'], row['Play'], row['Edge %']))
             inserted_count += 1
 
     conn.commit()

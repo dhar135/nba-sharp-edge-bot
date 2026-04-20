@@ -41,21 +41,23 @@ def parse_prizepicks_json(json_data):
     """
     print("[*] Parsing JSON payload...")
     
-    # 1. Build lookup dictionaries for players and leagues from the "included" array
+    # 1. Build lookup dictionaries for players and leagues
     players = {}
     leagues = {}
     
     for item in json_data.get('included', []):
         if item['type'] == 'new_player':
-            # Store the player's name using their ID as the key
-            players[item['id']] = item['attributes']['display_name'] # Sometimes it's 'name'
+            # NEW: Store both name and team
+            players[item['id']] = {
+                'name': item['attributes'].get('display_name') or item['attributes'].get('name'),
+                'team': item['attributes'].get('team', 'UNK')
+            }
         elif item['type'] == 'league':
-            # Store the league name using its ID as the key
             leagues[item['id']] = item['attributes']['name']
 
-    # 2. Iterate through the actual lines in the "data" array
     nba_projections = []
     
+    # 2. Iterate through the actual lines
     for proj in json_data.get('data', []):
         if proj['type'] != 'projection':
             continue
@@ -63,36 +65,45 @@ def parse_prizepicks_json(json_data):
         attrs = proj['attributes']
         rels = proj['relationships']
         
-        # Safely extract IDs
         league_id = rels.get('league', {}).get('data', {}).get('id')
         player_id = rels.get('new_player', {}).get('data', {}).get('id')
         
-        # Look up the actual names using our dictionaries
         league_name = leagues.get(league_id, "Unknown")
-        player_name = players.get(player_id, "Unknown")
         
-        # 3. FILTER: We only care about the NBA
+        # NEW: Extract name, team, and matchup (description)
+        player_info = players.get(player_id, {})
+        player_name = player_info.get('name', 'Unknown')
+        player_team = player_info.get('team', 'UNK')
+        matchup = attrs.get('description', 'Unknown')
+        
         if league_name != "NBA":
             continue
             
         stat_type = attrs.get('stat_type')
         line_score = attrs.get('line_score')
         odds_type = attrs.get('odds_type')
+        start_time = attrs.get('start_time')
+        
+        if start_time:
+            dt = pd.to_datetime(start_time)
+            game_date = dt.tz_convert('US/Eastern').strftime('%Y-%m-%d')
+        else:
+            game_date = None
 
-        # FILTER: We only want standard lines, no Demons/Goblins
         if odds_type != 'standard':
             continue
         
-        # Only grab standard stats to start (Points, Rebounds, Assists, PRA)
         target_stats = ["Points", "Rebounds", "Assists", "Pts+Rebs+Asts"]
         if stat_type in target_stats:
             nba_projections.append({
                 "Player": player_name,
+                "Team": player_team,     # NEW
+                "Matchup": matchup,      # NEW
                 "Stat": stat_type,
-                "Line": line_score
+                "Line": line_score,
+                "Game Date": game_date
             })
             
-    # 4. Convert to a clean pandas DataFrame
     df = pd.DataFrame(nba_projections)
     return df
 
