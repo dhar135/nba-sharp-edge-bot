@@ -72,10 +72,19 @@ def send_discord_alert(df, webhook_url):
 
     qualified_plays['Abs Edge'] = qualified_plays['Edge %'].abs()
     
-    core_df = qualified_plays[qualified_plays['Stat'].isin(CORE_STATS)].sort_values(by='Abs Edge', ascending=False).head(3)
+    # 1. ISOLATE CATEGORIES
+    # Get any Points props approved by the ML model
+    ml_points_plays = qualified_plays[qualified_plays['Stat'] == "Points"].sort_values(by='Abs Edge', ascending=False).head(3)
+    
+    # Get the best Combo/Peripheral props (excluding Points)
+    combo_stats = ["Rebounds", "Assists", "Pts+Rebs+Asts", "Pts+Rebs", "Pts+Asts", "Rebs+Asts"]
+    combo_plays = qualified_plays[qualified_plays['Stat'].isin(combo_stats)].sort_values(by='Abs Edge', ascending=False).head(3)
+    
+    # Get the best Defensive props (Micro)
     micro_df = qualified_plays[qualified_plays['Stat'].isin(MICRO_STATS)].sort_values(by='Abs Edge', ascending=False).head(3)
 
-    combined_top_plays = pd.concat([core_df, micro_df])
+    # Combine all plays for AI analysis
+    combined_top_plays = pd.concat([ml_points_plays, combo_plays, micro_df])
     
     ai_text = get_ai_analysis(combined_top_plays)
 
@@ -103,11 +112,17 @@ def send_discord_alert(df, webhook_url):
     if ai_text:
         embeds.append({"title": "🤖 AI Situational Analysis", "description": ai_text, "color": 3447003})
 
-    if not core_df.empty:
-        embeds.append({"title": "🔥 Top Core Plays", "description": format_rows(core_df), "color": 15105570})
+    # AI-VALIDATED POINTS (The "Brain" Picks) - Gets top priority slot
+    if not ml_points_plays.empty:
+        embeds.append({"title": "🤖 AI-VALIDATED POINTS (High Rest/Trend)", "description": format_rows(ml_points_plays), "color": 65280})
 
+    # HIGH-ALPHA COMBOS (The "Math" Picks)
+    if not combo_plays.empty:
+        embeds.append({"title": "📊 TOP CORE COMBOS", "description": format_rows(combo_plays), "color": 15105570})
+
+    # DEFENSIVE PLAYS (Micro)
     if not micro_df.empty:
-        embeds.append({"title": "🛡️ Top Micro Plays", "description": format_rows(micro_df), "color": 3066993})
+        embeds.append({"title": "🛡️ TOP MICRO PLAYS", "description": format_rows(micro_df), "color": 3066993})
 
     payload = {
         "content": "🚨 **SHARP EDGE ALERT** 🚨",
