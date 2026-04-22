@@ -1,57 +1,45 @@
 # src/engine/probability.py
-"""
-Phase 2: Poisson Distribution Model
-Converts volume/efficiency projections into true win probabilities
-Vegas-style line generation for edge detection
-"""
-import numpy as np
-import pandas as pd
 from scipy.stats import poisson
-from utils.utils import logger, timer
+import math
+from utils.utils import logger
 
-
-@timer
-def calculate_poisson_probabilities(lambda_param, line_value):
+def calculate_poisson_probabilities(projected_mean, sportsbook_line):
     """
-    Uses Poisson distribution to calculate probability of hitting over/under a given line.
+    Converts a deterministic projection into implied probabilities for Over/Under.
+    Handles half-point lines (e.g., 25.5) and integer lines (e.g., 25.0) which introduce push risks.
     
-    Args:
-    - lambda_param: Expected value (mean) of the distribution (e.g., expected points)
-    - line_value: The betting line (e.g., 25.5 points)
+    Returns: Dict of probabilities (Over, Under, Push)
+    """
+    if projected_mean <= 0:
+        return {"over": 0.0, "under": 100.0, "push": 0.0}
+
+    is_half_point = (sportsbook_line % 1 != 0)
     
-    Returns:
-    - Dictionary with OVER probability, UNDER probability, EV
-    """
-    # TODO: Phase 2 Implementation
-    logger.info("[*] Phase 2 Placeholder: Poisson probability not yet implemented")
-    return {"over_prob": None, "under_prob": None, "ev": None}
+    if is_half_point:
+        # For 25.5, Under is exactly 25 or less. Over is 26 or more.
+        floor_line = math.floor(sportsbook_line)
+        
+        prob_under = poisson.cdf(floor_line, projected_mean)
+        prob_over = 1.0 - prob_under
+        prob_push = 0.0
+        
+    else:
+        # For integer lines like 25.0, we must account for the exact push probability.
+        exact_line = int(sportsbook_line)
+        
+        prob_push = poisson.pmf(exact_line, projected_mean)
+        prob_under = poisson.cdf(exact_line - 1, projected_mean)
+        prob_over = 1.0 - poisson.cdf(exact_line, projected_mean)
+        
+    return {
+        "over": round(prob_over * 100, 2),
+        "under": round(prob_under * 100, 2),
+        "push": round(prob_push * 100, 2)
+    }
 
-
-@timer
-def generate_vegas_line(possession_projection, efficiency_projection):
+def get_true_edge(implied_prob, sportsbook_implied=54.2):
     """
-    Generates a "true" Vegas-style line based on:
-    - Projected possessions * Efficiency = Expected Output
-    - Applies league context (rest, back-to-back, etc.)
-    - Converts to Poisson probability
-    
-    Returns:
-    - True odds, true probability, line value
+    Calculates our exact EV% over the standard DFS implied line (usually -119 / 54.2%).
     """
-    # TODO: Phase 2 Implementation
-    logger.info("[*] Phase 2 Placeholder: Vegas line generation not yet implemented")
-    return {"true_line": None, "true_prob": None, "odds": None}
-
-
-@timer
-def detect_sharp_edges(true_line, pp_line, true_prob, pp_implied_prob):
-    """
-    Compares our true projections against PrizePicks market lines.
-    Flags discrepancies > 15% as potential edges.
-    
-    Returns:
-    - Edge percentage and direction (OVER/UNDER)
-    """
-    # TODO: Phase 2 Implementation
-    logger.info("[*] Phase 2 Placeholder: Edge detection not yet implemented")
-    return {"edge_pct": None, "direction": None}
+    edge = implied_prob - sportsbook_implied
+    return round(edge, 2)
