@@ -1,115 +1,40 @@
 # src/main.py
+"""
+SHARP EDGE V2.0 - The Orchestrator
+Routes raw data through Extractors → Engine → Services
+Implements Separation of Concerns: Stateless Extractors | Pure Math | Side Effects
+"""
 import os
 import pandas as pd
-import cloudscraper
-from engine import calculate_all_edges
-from notifier import send_discord_alert
 from dotenv import load_dotenv
-from db import init_db, log_predictions, filter_new_plays
-from grader import grade_pending_bets
-from utils.constants import SUPPORTED_STATS
+
+from extractors.pp_extractors import fetch_live_board
+from engine import calculate_all_edges
+from services.notifier import send_discord_alert
+from services.db import init_db, log_predictions, filter_new_plays
+from services.grader import grade_pending_bets
 from utils.utils import logger, timer
 
 load_dotenv()
 
 @timer
 def fetch_prizepicks_board():
-    logger.info("[*] Attempting to fetch PrizePicks board via Cloudscraper...")
-    url = "https://api.prizepicks.com/projections"
-    
-    # We create a scraper object that acts exactly like 'requests' but spoofs TLS/Browser signatures
-    scraper = cloudscraper.create_scraper() 
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-        "Referer": "https://app.prizepicks.com/",
-        "Origin": "https://app.prizepicks.com"
-    }
-    
-    try:
-        response = scraper.get(url, headers=headers)
-        if response.status_code == 200:
-            logger.info("[+] Successfully fetched PrizePicks board.")
-            return response.json()
-        else:
-            logger.info(f"[!] Failed to fetch PrizePicks. Status Code: {response.status_code}")
-            return None
-    except Exception as e:
-        logger.info(f"[!] Request error: {e}")
-        return None
+    """
+    DEPRECATED: Use extractors.pp_extractors.fetch_live_board() instead
+    This function is kept for backward compatibility during Phase 1 transition
+    """
+    logger.warning("[!] main.fetch_prizepicks_board() is deprecated. Use extractors.pp_extractors.fetch_live_board()")
+    return fetch_live_board()
 
 @timer
 def parse_prizepicks_json(json_data):
     """
-    Parses the massive JSON payload into a clean Pandas DataFrame containing only NBA props.
+    DEPRECATED: JSON parsing is handled in extractors.pp_extractors._parse_board_json()
+    This function is kept for backward compatibility during Phase 1 transition
     """
-    logger.info("[*] Parsing JSON payload...")
-    
-    # 1. Build lookup dictionaries for players and leagues
-    players = {}
-    leagues = {}
-    
-    for item in json_data.get('included', []):
-        if item['type'] == 'new_player':
-            # NEW: Store both name and team
-            players[item['id']] = {
-                'name': item['attributes'].get('display_name') or item['attributes'].get('name'),
-                'team': item['attributes'].get('team', 'UNK')
-            }
-        elif item['type'] == 'league':
-            leagues[item['id']] = item['attributes']['name']
-
-    nba_projections = []
-    
-    # 2. Iterate through the actual lines
-    for proj in json_data.get('data', []):
-        if proj['type'] != 'projection':
-            continue
-            
-        attrs = proj['attributes']
-        rels = proj['relationships']
-        
-        league_id = rels.get('league', {}).get('data', {}).get('id')
-        player_id = rels.get('new_player', {}).get('data', {}).get('id')
-        
-        league_name = leagues.get(league_id, "Unknown")
-        
-        # NEW: Extract name, team, and matchup (description)
-        player_info = players.get(player_id, {})
-        player_name = player_info.get('name', 'Unknown')
-        player_team = player_info.get('team', 'UNK')
-        matchup = attrs.get('description', 'Unknown')
-        
-        if league_name != "NBA":
-            continue
-            
-        stat_type = attrs.get('stat_type')
-        line_score = attrs.get('line_score')
-        odds_type = attrs.get('odds_type')
-        start_time = attrs.get('start_time')
-        
-        if start_time:
-            dt = pd.to_datetime(start_time)
-            game_date = dt.tz_convert('US/Eastern').strftime('%Y-%m-%d')
-        else:
-            game_date = None
-
-        if odds_type != 'standard':
-            continue
-        
-        if stat_type in SUPPORTED_STATS:
-            nba_projections.append({
-                "Player": player_name,
-                "Team": player_team,
-                "Matchup": matchup,
-                "Stat": stat_type,
-                "Line": line_score,
-                "Game Date": game_date
-            })
-            
-    df = pd.DataFrame(nba_projections)
-    return df
+    logger.warning("[!] main.parse_prizepicks_json() is deprecated. Use extractors.pp_extractors.fetch_live_board()")
+    from extractors.pp_extractors import _parse_board_json
+    return _parse_board_json(json_data)
 
 if __name__ == "__main__":
     DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_URL")
@@ -117,15 +42,15 @@ if __name__ == "__main__":
     # 1. Initialize DB
     init_db()
     
-    logger.info("=== Sharp Edge MVP Initialization ===\n")
+    logger.info("=== Sharp Edge V2.0 MVP Initialization ===\n")
     
-    pp_data = fetch_prizepicks_board()
+    # Use the new stateless extractor
+    pp_data_df = fetch_live_board()
     
-    if pp_data:
-        clean_board = parse_prizepicks_json(pp_data)
-        logger.info(f"\n[+] Extracted {len(clean_board)} STANDARD NBA lines.")
+    if not pp_data_df.empty:
+        logger.info(f"\n[+] Extracted {len(pp_data_df)} STANDARD NBA lines.")
         
-        edges_df = calculate_all_edges(clean_board, sample_size=15, edge_threshold=15.0)
+        edges_df = calculate_all_edges(pp_data_df, sample_size=15, edge_threshold=15.0)
         
         logger.info("\n=== THE EDGE REPORT (>15% Discrepancies) ===")
         if edges_df.empty:

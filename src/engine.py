@@ -4,7 +4,7 @@ import numpy as np
 import joblib
 import os
 from nba_fetcher import get_league_gamelog, get_opponent_matchup_multipliers
-from utils import logger, timer
+from utils.utils import logger, timer
 
 @timer
 def calculate_all_edges(pp_df, sample_size=15, edge_threshold=15.0):
