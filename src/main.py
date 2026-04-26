@@ -1,154 +1,167 @@
 # src/main.py
+"""
+SHARP EDGE V2.0 - The Orchestrator
+Routes raw data through Extractors → DeterministicProjector → Poisson → MLVetoLayer → Services
+Full deterministic per-possession engine with situational veto layer
+"""
 import os
 import pandas as pd
-import cloudscraper
-from engine import calculate_all_edges
-from notifier import send_discord_alert
+import time
 from dotenv import load_dotenv
-from db import init_db, log_predictions, filter_new_plays
-from grader import grade_pending_bets
-from utils.constants import SUPPORTED_STATS
+
+from extractors.pp_extractors import fetch_live_board
+from extractors.nba_extractors import get_advanced_player_baselines, get_team_pace_and_defense, get_tracking_data
+from engine.projections import DeterministicProjector
+from engine.probability import calculate_poisson_probabilities, get_true_edge
+from engine.veto import MLVetoLayer
+
+from services.db import init_db, log_predictions, filter_new_plays
+from services.notifier import send_discord_alert
 from utils.utils import logger, timer
+
+# For the Veto Layer backwards compatibility
+from nba_api.stats.endpoints import playergamelog
+from services.grader import grade_pending_bets
 
 load_dotenv()
 
-@timer
-def fetch_prizepicks_board():
-    logger.info("[*] Attempting to fetch PrizePicks board via Cloudscraper...")
-    url = "https://api.prizepicks.com/projections"
-    
-    # We create a scraper object that acts exactly like 'requests' but spoofs TLS/Browser signatures
-    scraper = cloudscraper.create_scraper() 
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-        "Referer": "https://app.prizepicks.com/",
-        "Origin": "https://app.prizepicks.com"
-    }
-    
-    try:
-        response = scraper.get(url, headers=headers)
-        if response.status_code == 200:
-            logger.info("[+] Successfully fetched PrizePicks board.")
-            return response.json()
-        else:
-            logger.info(f"[!] Failed to fetch PrizePicks. Status Code: {response.status_code}")
-            return None
-    except Exception as e:
-        logger.info(f"[!] Request error: {e}")
-        return None
 
 @timer
-def parse_prizepicks_json(json_data):
-    """
-    Parses the massive JSON payload into a clean Pandas DataFrame containing only NBA props.
-    """
-    logger.info("[*] Parsing JSON payload...")
+def run_v2_pipeline(edge_threshold=2.5):
+    logger.info("=== Booting Sharp Edge V2.0 (Deterministic Engine) ===\n")
     
-    # 1. Build lookup dictionaries for players and leagues
-    players = {}
-    leagues = {}
-    
-    for item in json_data.get('included', []):
-        if item['type'] == 'new_player':
-            # NEW: Store both name and team
-            players[item['id']] = {
-                'name': item['attributes'].get('display_name') or item['attributes'].get('name'),
-                'team': item['attributes'].get('team', 'UNK')
-            }
-        elif item['type'] == 'league':
-            leagues[item['id']] = item['attributes']['name']
+    # 1. EXTRACTION
+    logger.info("[*] Phase 1: Extracting raw data from stateless sources...")
+    pp_board = fetch_live_board()
+    if pp_board.empty:
+        logger.info("[-] PrizePicks board is empty or failed to load. Exiting.")
+        return
 
-    nba_projections = []
+    # CRITICAL FIX: Pull both a stable season baseline and a volatile recent baseline
+    adv_season = get_advanced_player_baselines(last_n_games=0, season_type="Regular Season")
+    adv_recent = get_advanced_player_baselines(last_n_games=5, season_type="Playoffs")
+    pace_df = get_team_pace_and_defense()
+    tracking_df = get_tracking_data()
+
+    # 2. INITIALIZE ENGINES
+    logger.info("[*] Phase 2: Initializing deterministic projector and veto layer...")
+    projector = DeterministicProjector(adv_season, tracking_df, pace_df)
+    veto_layer = MLVetoLayer()
     
-    # 2. Iterate through the actual lines
-    for proj in json_data.get('data', []):
-        if proj['type'] != 'projection':
+    results = []
+
+    # 3. TRANSFORM & CALCULATE
+    logger.info("[*] Phase 3: Processing mathematical projections for each prop...")
+    for _, row in pp_board.iterrows():
+        player = row['Player']
+        stat = row['Stat']
+        line = float(row['Line'])
+        matchup = row['Matchup']
+        
+        season_rows = adv_season[adv_season['PLAYER_NAME'] == player]
+        recent_rows = adv_recent[adv_recent['PLAYER_NAME'] == player]
+        if season_rows.empty:
             continue
+        
+        # CRITICAL FIX: Pull the TRUE team from the NBA API, ignoring PrizePicks' glitches
+        true_team = season_rows.iloc[0]['TEAM_ABBREVIATION']
+        season_avg_minutes = season_rows.iloc[0]['MIN']
+        projected_minutes = season_avg_minutes
+
+        # === THE BI-DIRECTIONAL RECENCY OVERRIDE (Injury / Playoff Rotation Context) ===
+        if not recent_rows.empty and season_avg_minutes > 0:
+            recent_minutes = recent_rows.iloc[0]['MIN']
             
-        attrs = proj['attributes']
-        rels = proj['relationships']
-        
-        league_id = rels.get('league', {}).get('data', {}).get('id')
-        player_id = rels.get('new_player', {}).get('data', {}).get('id')
-        
-        league_name = leagues.get(league_id, "Unknown")
-        
-        # NEW: Extract name, team, and matchup (description)
-        player_info = players.get(player_id, {})
-        player_name = player_info.get('name', 'Unknown')
-        player_team = player_info.get('team', 'UNK')
-        matchup = attrs.get('description', 'Unknown')
-        
-        if league_name != "NBA":
+            # 1. THE SPIKE: Playing 20% MORE minutes recently (e.g., starter hurt)
+            if recent_minutes >= (season_avg_minutes * 1.20):
+                projected_minutes = recent_minutes
+                logger.info(f"  [!] MINUTE SPIKE DETECTED: {player} (Season: {season_avg_minutes:.1f} -> Recent: {recent_minutes:.1f})")
+                projector.adv_df = adv_recent.set_index('PLAYER_NAME')
+                
+            # 2. THE DROP: Playing 20% LESS minutes recently (e.g., benched for playoffs)
+            elif recent_minutes <= (season_avg_minutes * 0.80):
+                projected_minutes = recent_minutes
+                logger.info(f"  [!] MINUTE DROP DETECTED: {player} (Season: {season_avg_minutes:.1f} -> Recent: {recent_minutes:.1f})")
+                projector.adv_df = adv_recent.set_index('PLAYER_NAME')
+                
+            # 3. STABLE: No major rotation change detected
+            else:
+                projector.adv_df = adv_season.set_index('PLAYER_NAME')
+
+        try:
+            opp_team = str(matchup).split(' ')[-1].upper()
+        except Exception:
             continue
-            
-        stat_type = attrs.get('stat_type')
-        line_score = attrs.get('line_score')
-        odds_type = attrs.get('odds_type')
-        start_time = attrs.get('start_time')
+
+        projection = projector.generate_projection(player, opp_team, projected_minutes, stat)
+        if projection is None or projection <= 0:
+            continue
+
+        probs = calculate_poisson_probabilities(projection, line)
         
-        if start_time:
-            dt = pd.to_datetime(start_time)
-            game_date = dt.tz_convert('US/Eastern').strftime('%Y-%m-%d')
+        if projection > line:
+            play = "OVER"
+            implied_prob = probs["over"]
         else:
-            game_date = None
+            play = "UNDER"
+            implied_prob = probs["under"]
 
-        if odds_type != 'standard':
-            continue
+        ev_edge = get_true_edge(implied_prob, sportsbook_implied=54.2)
+
+        is_vetoed = False
+        ml_prob_val = "-"
         
-        if stat_type in SUPPORTED_STATS:
-            nba_projections.append({
-                "Player": player_name,
-                "Team": player_team,
+        if ev_edge >= edge_threshold:
+            if stat == "Points":
+                try:
+                    player_id = season_rows.iloc[0]['PLAYER_ID']
+                    player_logs = playergamelog.PlayerGameLog(player_id=player_id).get_data_frames()[0]
+                    game_date = row.get('Game Date', pd.Timestamp.now().strftime('%Y-%m-%d'))
+                    is_vetoed, ml_prob_val = veto_layer.check_veto(stat, matchup, game_date, player_logs, play)
+                    time.sleep(0.3)
+                except Exception as e:
+                    logger.warning(f"[!] Veto Layer check failed for {player}: {e}")
+
+            results.append({
+                "Player": player,
+                "Team": true_team, # <--- THIS OVERRIDES THE PRIZEPICKS GLITCH
                 "Matchup": matchup,
-                "Stat": stat_type,
-                "Line": line_score,
-                "Game Date": game_date
+                "Stat": stat,
+                "PP Line": line,
+                "V2 Proj": projection,
+                "Play": play,
+                "Poisson Prob": implied_prob,
+                "EV Edge": ev_edge,
+                "Vetoed": is_vetoed,
+                "ML Prob": ml_prob_val,
+                "Game Date": row.get('Game Date', None)
             })
+
+    # 4. LOAD & NOTIFY
+    logger.info("[*] Phase 4: Processing results and pushing to services...")
+    results_df = pd.DataFrame(results)
+    if not results_df.empty:
+        results_df = results_df.sort_values(by='EV Edge', ascending=False)
+        
+        # Filter Spam: Only alert on new or upgraded plays
+        new_plays_df = filter_new_plays(results_df)
+        
+        if not new_plays_df.empty:
+            logger.info(f"\n[+] Found {len(new_plays_df)} *new* plays to alert.")
+            webhook = os.getenv("DISCORD_WEBHOOK_URL")
+            if webhook:
+                send_discord_alert(new_plays_df, webhook)
+                logger.info("[+] Discord batched alert sent.")
             
-    df = pd.DataFrame(nba_projections)
-    return df
+            log_predictions(new_plays_df)
+        else:
+            logger.info("[-] No *new* plays to alert on this cycle.")
+    else:
+        logger.info("[-] Market is tight. Zero plays met the Poisson EV threshold.")
+
 
 if __name__ == "__main__":
-    DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_URL")
-    
-    # 1. Initialize DB
     init_db()
-    
-    logger.info("=== Sharp Edge MVP Initialization ===\n")
-    
-    pp_data = fetch_prizepicks_board()
-    
-    if pp_data:
-        clean_board = parse_prizepicks_json(pp_data)
-        logger.info(f"\n[+] Extracted {len(clean_board)} STANDARD NBA lines.")
-        
-        edges_df = calculate_all_edges(clean_board, sample_size=15, edge_threshold=15.0)
-        
-        logger.info("\n=== THE EDGE REPORT (>15% Discrepancies) ===")
-        if edges_df.empty:
-            logger.info("No massive edges found on the board right now. Market is tight.")
-        else:
-            edges_df['Abs Diff'] = edges_df['Diff'].abs()
-            edges_df = edges_df.sort_values(by='Abs Diff', ascending=False).drop(columns=['Abs Diff'])
-            logger.info(edges_df.to_string(index=False))
-            
-            # FILTER THE SPAM: Only keep plays we haven't seen today
-            new_plays_df = filter_new_plays(edges_df)
-            
-            if not new_plays_df.empty:
-                # Send Discord Alert
-                if DISCORD_WEBHOOK:
-                    send_discord_alert(new_plays_df, DISCORD_WEBHOOK)
-                else:
-                    logger.info("[!] Discord alert skipped. No webhook URL found.")
-                    
-                # 2. Log to Database
-                log_predictions(new_plays_df)
-                
-                # 3. Grade any pending bets
-                grade_pending_bets()
-            else:
-                logger.info("[-] No NEW edges found on this run. Discord alert skipped to prevent spam.")
+    run_v2_pipeline(edge_threshold=2.5)
+    logger.info("[*] Phase 5: Grading pending bets...")
+    grade_pending_bets()
