@@ -224,3 +224,6 @@ sharp_edge.db
 data/*.csv
 models/*.pkl
 *.db
+
+logs/
+*.csv
