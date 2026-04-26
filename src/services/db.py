@@ -28,17 +28,33 @@ def init_db():
             play TEXT,
             edge_percent REAL,
             ml_prob REAL, 
+            v2_proj REAL,
+            poisson_prob REAL,
+            ev_edge REAL,
+            vetoed INTEGER,
             actual_result REAL,
             status TEXT
         )
     ''')
+    
+    # Ensure the table has all V2 columns (graceful migration)
+    try:
+        cursor.execute("ALTER TABLE predictions ADD COLUMN v2_proj REAL")
+        cursor.execute("ALTER TABLE predictions ADD COLUMN poisson_prob REAL")
+        cursor.execute("ALTER TABLE predictions ADD COLUMN ev_edge REAL")
+        cursor.execute("ALTER TABLE predictions ADD COLUMN vetoed INTEGER")
+        conn.commit()
+    except sqlite3.OperationalError:
+        # Columns already exist
+        pass
+    
     conn.commit()
     conn.close()
-    logger.info("[*] Database initialized/verified successfully.")
+    logger.info("[*] Database initialized/verified successfully with V2 schema.")
 
 @timer
 def log_predictions(df):
-    """Takes ALL generated plays and UPSERTS them to the DB."""
+    """Takes ALL generated V2 plays and UPSERTS them to the DB."""
     if df.empty:
         return
 
@@ -50,10 +66,11 @@ def log_predictions(df):
     updated_count = 0
     
     for index, row in df.iterrows():
-        abs_edge = abs(row['Edge %'])
+        # Support both V1 (Edge %) and V2 (EV Edge) column names
+        ev_edge_val = row.get('EV Edge', row.get('Edge %', 0.0))
         
         cursor.execute('''
-            SELECT edge_percent FROM predictions 
+            SELECT ev_edge FROM predictions 
             WHERE date = ? AND player = ? AND stat_type = ?
         ''', (today_date, row['Player'], row['Stat']))
         
@@ -62,23 +79,27 @@ def log_predictions(df):
         ml_prob_val = row.get('ML Prob', None)
         if ml_prob_val == "-" or pd.isna(ml_prob_val):
             ml_prob_val = None
-            
+        
+        # Extract V2 columns
+        v2_proj = row.get('V2 Proj', None)
+        poisson_prob = row.get('Poisson Prob', None)
+        vetoed = 1 if row.get('Vetoed', False) else 0
+        
         if not existing_record:
             cursor.execute('''
-                INSERT INTO predictions (date, game_date, player, team, matchup, stat_type, line, play, edge_percent, ml_prob, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
-            ''', (today_date, row['Game Date'], row['Player'], row['Team'], row['Matchup'], row['Stat'], row['PP Line'], row['Play'], row['Edge %'], ml_prob_val))
+                INSERT INTO predictions (date, game_date, player, team, matchup, stat_type, line, play, edge_percent, ml_prob, v2_proj, poisson_prob, ev_edge, vetoed, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
+            ''', (today_date, row.get('Game Date'), row['Player'], row['Team'], row.get('Matchup'), row['Stat'], row.get('PP Line'), row.get('Play'), ev_edge_val, ml_prob_val, v2_proj, poisson_prob, ev_edge_val, vetoed))
             inserted_count += 1
         else:
-            # === THE LINE MOVEMENT UPGRADE ===
-            old_edge = abs(existing_record[0])
-            # If the edge increased, overwrite the old record in the DB!
-            if abs_edge > old_edge:
+            # Line movement upgrade: if EV edge increased, update the record
+            old_ev_edge = existing_record[0] if existing_record[0] else 0.0
+            if ev_edge_val > old_ev_edge:
                 cursor.execute('''
                     UPDATE predictions 
-                    SET line = ?, edge_percent = ?, ml_prob = ?
+                    SET line = ?, edge_percent = ?, ev_edge = ?, ml_prob = ?, v2_proj = ?, poisson_prob = ?, vetoed = ?
                     WHERE date = ? AND player = ? AND stat_type = ?
-                ''', (row['PP Line'], row['Edge %'], ml_prob_val, today_date, row['Player'], row['Stat']))
+                ''', (row.get('PP Line'), ev_edge_val, ev_edge_val, ml_prob_val, v2_proj, poisson_prob, vetoed, today_date, row['Player'], row['Stat']))
                 updated_count += 1
 
     conn.commit()
@@ -88,7 +109,7 @@ def log_predictions(df):
         logger.info(f"[+] DB Update: {inserted_count} New Plays | {updated_count} Line Upgrades.")
 
 def filter_new_plays(df):
-    """Filters the dataframe to ONLY include plays that beat today's leaderboard."""
+    """Filters the dataframe to ONLY include plays that are new or have improved."""
     if df.empty:
         return df
         
@@ -96,49 +117,28 @@ def filter_new_plays(df):
     cursor = conn.cursor()
     today_date = datetime.now().strftime("%Y-%m-%d")
     
-    # Helper to find the "Score to beat" (The 3rd place edge currently in the DB)
-    def get_threshold(stat_list):
-        placeholders = ','.join(['?'] * len(stat_list))
-        query = f'''
-            SELECT ABS(edge_percent) FROM predictions
-            WHERE date = ? AND stat_type IN ({placeholders})
-            ORDER BY ABS(edge_percent) DESC LIMIT 1 OFFSET 2
-        '''
-        cursor.execute(query, [today_date] + stat_list)
-        res = cursor.fetchone()
-        return res[0] if res else 30.0 # Default to 30% if podium isn't full yet
-
-    core_threshold = get_threshold(CORE_STATS)
-    micro_threshold = get_threshold(MICRO_STATS)
-    
     new_rows = []
     for index, row in df.iterrows():
-        abs_edge = abs(row['Edge %'])
+        # Support both V1 and V2 edge columns
+        current_ev_edge = row.get('EV Edge', row.get('Edge %', 0.0))
         
-        # 1. AI Points Check (Always let high-confidence ML plays compete)
-        is_ml_play = row['Stat'] == "Points" and pd.notna(row.get('ML Prob')) and row.get('ML Prob') != "-"
-        
-        # 2. The Podium Check
-        if not is_ml_play:
-            threshold = core_threshold if row['Stat'] in CORE_STATS else micro_threshold
-            # If it doesn't beat the 3rd place play, ignore it!
-            if abs_edge <= threshold:
-                continue 
-                
-        # 3. Has it been alerted today?
+        # Check if this play exists in the database
         cursor.execute('''
-            SELECT edge_percent FROM predictions 
+            SELECT ev_edge, edge_percent FROM predictions 
             WHERE date = ? AND player = ? AND stat_type = ?
         ''', (today_date, row['Player'], row['Stat']))
         existing_record = cursor.fetchone()
         
         if not existing_record:
-            new_rows.append(row) # It's a brand new top-tier play!
+            # Brand new play - always alert
+            new_rows.append(row)
+            logger.info(f"    [+] NEW PLAY: {row['Player']} {row['Stat']}")
         else:
-            old_edge = abs(existing_record[0])
-            # Only send a RE-ALERT to Discord if the edge improved by at least 3%
-            if abs_edge >= (old_edge + 3.0):
+            # Play exists - only re-alert if EV edge improved by at least 0.5%
+            old_ev_edge = existing_record[0] if existing_record[0] else 0.0
+            if current_ev_edge >= (old_ev_edge + 0.5):
                 new_rows.append(row)
+                logger.info(f"    [+] UPGRADED: {row['Player']} {row['Stat']} (EV: {old_ev_edge:.2f}% → {current_ev_edge:.2f}%)")
                 
     conn.close()
     return pd.DataFrame(new_rows) if new_rows else pd.DataFrame()

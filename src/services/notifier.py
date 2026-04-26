@@ -62,72 +62,75 @@ def get_ai_analysis(plays_df):
         return ""
 
 @timer
-def send_discord_alert(df, webhook_url):
-    if df.empty:
+def send_discord_alert(plays_df, webhook_url):
+    """
+    Pushes a batched V2.0 alert to Discord. 
+    Shows AI analysis, Top 5 plays in the embed, and attaches the full CSV.
+    """
+    if plays_df.empty:
         return
         
-    logger.info("\n[*] Formatting and sending Discord alert (Embed Version)...")
+    logger.info(f"[*] Formatting {len(plays_df)} plays and generating CSV...")
     
-    qualified_plays = df[df['Edge %'].abs() >= 30.0].copy()
-    if qualified_plays.empty:
-        return
+    # 1. Save ALL plays to CSV
+    os.makedirs("data", exist_ok=True)
+    csv_path = "data/v2_active_plays.csv"
+    plays_df.to_csv(csv_path, index=False)
 
-    qualified_plays['Abs Edge'] = qualified_plays['Edge %'].abs()
+    # 2. Isolate Top Plays for the Embed (Prevents Discord text limits)
+    # Prioritize plays that passed the ML Veto, sorted by best EV Edge
+    cleared_plays = plays_df[plays_df['Vetoed'] == False].sort_values(by='EV Edge', ascending=False)
     
-    # 1. ISOLATE CATEGORIES
-    ml_points_plays = qualified_plays[qualified_plays['Stat'] == "Points"].sort_values(by='Abs Edge', ascending=False).head(3)
-    combo_stats = ["Rebounds", "Assists", "Pts+Rebs+Asts", "Pts+Rebs", "Pts+Asts", "Rebs+Asts"]
-    combo_plays = qualified_plays[qualified_plays['Stat'].isin(combo_stats)].sort_values(by='Abs Edge', ascending=False).head(3)
-    micro_df = qualified_plays[qualified_plays['Stat'].isin(MICRO_STATS)].sort_values(by='Abs Edge', ascending=False).head(3)
+    # If the market is brutal and EVERYTHING was vetoed, just show the top vetoed plays
+    display_plays = cleared_plays.head(5) if not cleared_plays.empty else plays_df.head(5)
+    
+    # 3. Get Gemini AI Situational Analysis
+    ai_text = get_ai_analysis(display_plays)
 
-    combined_top_plays = pd.concat([ml_points_plays, combo_plays, micro_df])
-    ai_text = get_ai_analysis(combined_top_plays)
-
-    def format_rows(segment_df):
-        msg = ""
-        for index, row in segment_df.iterrows():
-            emoji = "📈" if row['Play'] == "OVER" else "📉"
-            
-            ml_badge = ""
-            if 'ML Prob' in row and pd.notna(row['ML Prob']) and row['ML Prob'] != "-":
-                ml_prob = float(row['ML Prob'])
-                display_prob = ml_prob if row['Play'] == "OVER" else round(100 - ml_prob, 1)
-                ml_badge = f" | 🤖 **ML Conf: {display_prob}%**"
-
-            msg += f"**{row['Player']}** ({row['Team']}) | {row['Stat']}\n"
-            msg += f"> 🥊 Matchup: {row['Matchup']}\n"
-            msg += f"> 🎯 Line: **{row['PP Line']}** | Play: {emoji} **{row['Play']}**\n"
-            msg += f"> 📊 15g Med: **{row['15g Median']}** | 5g Med: **{row['5g Median']}**\n"
-            msg += f"> ⚖️ Edge: **{row['Edge %']}%**{ml_badge}\n\n"
-        return msg
-
+    # 4. Build Embeds
     embeds = []
     if ai_text:
-        embeds.append({"title": "🤖 AI Situational Analysis", "description": ai_text, "color": 3447003})
+        embeds.append({
+            "title": "🤖 Gemini Situational Analysis", 
+            "description": ai_text, 
+            "color": 3447003
+        })
 
-    if not ml_points_plays.empty:
-        embeds.append({"title": "🤖 AI-VALIDATED POINTS (High Rest/Trend)", "description": format_rows(ml_points_plays), "color": 65280})
+    # Format the display rows
+    msg = ""
+    for _, row in display_plays.iterrows():
+        status = "✅ **CLEARED**" if not row['Vetoed'] else "🚨 **VETOED**"
+        msg += f"**{row['Player']}** ({row['Team']}) | {row['Stat']}\n"
+        msg += f"> 🎯 Line: **{row['PP Line']}** | Play: **{row['Play']}**\n"
+        msg += f"> 📊 V2 Proj: **{row['V2 Proj']:.2f}** | Poisson: **{row['Poisson Prob']:.1f}%**\n"
+        msg += f"> ⚖️ Edge: **{row['EV Edge']:.2f}%** | {status}\n\n"
 
-    if not combo_plays.empty:
-        embeds.append({"title": "📊 TOP CORE COMBOS", "description": format_rows(combo_plays), "color": 15105570})
-
-    if not micro_df.empty:
-        embeds.append({"title": "🛡️ TOP MICRO PLAYS", "description": format_rows(micro_df), "color": 3066993})
+    embeds.append({
+        "title": f"⚡ TOP V2 DETERMINISTIC PLAYS (Showing {len(display_plays)} of {len(plays_df)})",
+        "description": msg,
+        "color": 65280 if not cleared_plays.empty else 16711680,
+        "footer": {"text": "NBA Sharp Edge V2.0 • Full list in attached CSV"}
+    })
 
     payload = {
-        "content": "🚨 **SHARP EDGE ALERT** 🚨",
+        "content": "🚨 **SHARP EDGE V2.0 ALERT** 🚨",
         "embeds": embeds,
         "username": "SharpEdge Bot"
     }
     
-    csv_path = "data/daily_picks.csv"
-    if os.path.exists(csv_path):
+    # 5. Send Single Payload with CSV
+    try:
         with open(csv_path, "rb") as f:
-            files = {"file": ("daily_picks.csv", f, "text/csv")}
-            requests.post(webhook_url, data={"payload_json": json.dumps(payload)}, files=files)
-    else:
-        requests.post(webhook_url, data=json.dumps(payload), headers={'Content-Type': 'application/json'})
-    logger.info("[+] Discord alert sent successfully!")
+            files = {"file": ("v2_active_plays.csv", f, "text/csv")}
+            # payload_json is required by Discord API when sending files alongside embeds
+            response = requests.post(webhook_url, data={"payload_json": json.dumps(payload)}, files=files)
+            
+        if response.status_code in [200, 204]:
+            logger.info("[+] Discord batched alert with CSV sent successfully!")
+        else:
+            logger.error(f"[!] Discord Webhook returned {response.status_code}")
+    except Exception as e:
+        logger.error(f"[!] Failed to send Discord alert: {e}")
 
 def send_grading_report(summary, csv_path, webhook_url):
     """Sends a clean summary of graded bets to Discord and attaches the full CSV."""

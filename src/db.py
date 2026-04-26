@@ -11,7 +11,7 @@ MICRO_STATS = ["3-PT Made", "Blocked Shots", "Steals", "Turnovers", "Blks+Stls"]
 
 @timer
 def init_db():
-    """Creates the predictions table if it doesn't exist."""
+    """Creates the V2.0 predictions table."""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
@@ -25,16 +25,19 @@ def init_db():
             matchup TEXT,
             stat_type TEXT,
             line REAL,
+            v2_proj REAL,
             play TEXT,
-            edge_percent REAL,
-            ml_prob REAL, 
+            poisson_prob REAL,
+            ev_edge REAL,
+            vetoed INTEGER,
+            ml_prob TEXT, 
             actual_result REAL,
             status TEXT
         )
     ''')
     conn.commit()
     conn.close()
-    logger.info("[*] Database initialized/verified successfully.")
+    logger.info("[*] V2 Database Schema initialized/verified successfully.")
 
 @timer
 def log_predictions(df):
@@ -50,35 +53,32 @@ def log_predictions(df):
     updated_count = 0
     
     for index, row in df.iterrows():
-        abs_edge = abs(row['Edge %'])
+        abs_edge = abs(row['EV Edge'])
+        game_date = row.get('Game Date', today_date)
         
         cursor.execute('''
-            SELECT edge_percent FROM predictions 
+            SELECT ev_edge FROM predictions 
             WHERE date = ? AND player = ? AND stat_type = ?
         ''', (today_date, row['Player'], row['Stat']))
         
         existing_record = cursor.fetchone()
         
-        ml_prob_val = row.get('ML Prob', None)
-        if ml_prob_val == "-" or pd.isna(ml_prob_val):
-            ml_prob_val = None
-            
         if not existing_record:
             cursor.execute('''
-                INSERT INTO predictions (date, game_date, player, team, matchup, stat_type, line, play, edge_percent, ml_prob, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
-            ''', (today_date, row['Game Date'], row['Player'], row['Team'], row['Matchup'], row['Stat'], row['PP Line'], row['Play'], row['Edge %'], ml_prob_val))
+                INSERT INTO predictions (date, game_date, player, team, matchup, stat_type, line, v2_proj, play, poisson_prob, ev_edge, vetoed, ml_prob, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
+            ''', (today_date, game_date, row['Player'], row['Team'], row['Matchup'], row['Stat'], row['PP Line'], row['V2 Proj'], row['Play'], row['Poisson Prob'], row['EV Edge'], int(row['Vetoed']), str(row['ML Prob'])))
             inserted_count += 1
         else:
             # === THE LINE MOVEMENT UPGRADE ===
             old_edge = abs(existing_record[0])
-            # If the edge increased, overwrite the old record in the DB!
+            # If the edge increased, overwrite the old record in the DB
             if abs_edge > old_edge:
                 cursor.execute('''
                     UPDATE predictions 
-                    SET line = ?, edge_percent = ?, ml_prob = ?
+                    SET line = ?, v2_proj = ?, poisson_prob = ?, ev_edge = ?, vetoed = ?, ml_prob = ?
                     WHERE date = ? AND player = ? AND stat_type = ?
-                ''', (row['PP Line'], row['Edge %'], ml_prob_val, today_date, row['Player'], row['Stat']))
+                ''', (row['PP Line'], row['V2 Proj'], row['Poisson Prob'], row['EV Edge'], int(row['Vetoed']), str(row['ML Prob']), today_date, row['Player'], row['Stat']))
                 updated_count += 1
 
     conn.commit()
@@ -96,47 +96,44 @@ def filter_new_plays(df):
     cursor = conn.cursor()
     today_date = datetime.now().strftime("%Y-%m-%d")
     
-    # Helper to find the "Score to beat" (The 3rd place edge currently in the DB)
     def get_threshold(stat_list):
         placeholders = ','.join(['?'] * len(stat_list))
         query = f'''
-            SELECT ABS(edge_percent) FROM predictions
+            SELECT ABS(ev_edge) FROM predictions
             WHERE date = ? AND stat_type IN ({placeholders})
-            ORDER BY ABS(edge_percent) DESC LIMIT 1 OFFSET 2
+            ORDER BY ABS(ev_edge) DESC LIMIT 1 OFFSET 2
         '''
         cursor.execute(query, [today_date] + stat_list)
         res = cursor.fetchone()
-        return res[0] if res else 30.0 # Default to 30% if podium isn't full yet
+        return res[0] if res else 2.5 # V2 threshold lowered to 2.5%
 
     core_threshold = get_threshold(CORE_STATS)
     micro_threshold = get_threshold(MICRO_STATS)
     
     new_rows = []
     for index, row in df.iterrows():
-        abs_edge = abs(row['Edge %'])
+        abs_edge = abs(row['EV Edge'])
         
-        # 1. AI Points Check (Always let high-confidence ML plays compete)
-        is_ml_play = row['Stat'] == "Points" and pd.notna(row.get('ML Prob')) and row.get('ML Prob') != "-"
-        
+        # 1. Skip if Vetoed by ML
+        if row['Vetoed']:
+            continue
+            
         # 2. The Podium Check
-        if not is_ml_play:
-            threshold = core_threshold if row['Stat'] in CORE_STATS else micro_threshold
-            # If it doesn't beat the 3rd place play, ignore it!
-            if abs_edge <= threshold:
-                continue 
+        threshold = core_threshold if row['Stat'] in CORE_STATS else micro_threshold
+        if abs_edge <= threshold:
+            continue 
                 
         # 3. Has it been alerted today?
         cursor.execute('''
-            SELECT edge_percent FROM predictions 
+            SELECT ev_edge FROM predictions 
             WHERE date = ? AND player = ? AND stat_type = ?
         ''', (today_date, row['Player'], row['Stat']))
         existing_record = cursor.fetchone()
         
         if not existing_record:
-            new_rows.append(row) # It's a brand new top-tier play!
+            new_rows.append(row) 
         else:
             old_edge = abs(existing_record[0])
-            # Only send a RE-ALERT to Discord if the edge improved by at least 3%
             if abs_edge >= (old_edge + 3.0):
                 new_rows.append(row)
                 
