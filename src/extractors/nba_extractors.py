@@ -39,7 +39,9 @@ def get_advanced_player_baselines(season="2025-26", last_n_games=15, season_type
         
     except Exception as e:
         logger.error(f"[!] Failed to fetch player baselines: {e}")
-        return pd.DataFrame()
+        # Return an empty DataFrame that still has the expected schema
+        expected_columns = ['PLAYER_ID', 'PLAYER_NAME', 'TEAM_ABBREVIATION', 'MIN', 'USG_PCT', 'TS_PCT', 'AST_PCT', 'REB_PCT', 'PACE', 'PTS', 'AST', 'REB']
+        return pd.DataFrame(columns=expected_columns)
 
 
 @timer

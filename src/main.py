@@ -40,6 +40,12 @@ def run_v2_pipeline(edge_threshold=2.5):
     # CRITICAL FIX: Pull both a stable season baseline and a volatile recent baseline
     adv_season = get_advanced_player_baselines(last_n_games=0, season_type="Regular Season")
     adv_recent = get_advanced_player_baselines(last_n_games=5, season_type="Playoffs")
+
+    # ADD THIS SAFETY CHECK:
+    if adv_season.empty or adv_recent.empty:
+        logger.error("[-] NBA API timed out and failed to load player baselines. Exiting cycle.")
+        return
+    
     pace_df = get_team_pace_and_defense()
     tracking_df = get_tracking_data()
 
@@ -162,6 +168,6 @@ def run_v2_pipeline(edge_threshold=2.5):
 
 if __name__ == "__main__":
     init_db()
-    run_v2_pipeline(edge_threshold=2.5)
+    # run_v2_pipeline(edge_threshold=2.5)
     logger.info("[*] Phase 5: Grading pending bets...")
     grade_pending_bets()

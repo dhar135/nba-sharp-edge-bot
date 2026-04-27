@@ -9,7 +9,7 @@ import os
 import json
 import requests
 from datetime import datetime
-from nba_fetcher import get_league_gamelog, get_live_boxscore, get_game_status
+from nba_fetcher import get_league_gamelog, get_live_boxscore, get_game_status, resolve_stat_value
 from services.notifier import send_grading_report
 from utils.utils import logger, timer
 from dotenv import load_dotenv
@@ -49,14 +49,13 @@ def grade_pending_bets():
         actual_val = None
         result_status = "PENDING"
         
-        status = get_game_status(player, game_date, game_status_cache, team)
-                
-        # === INJECT THIS DEBUG LINE ===
-        logger.info(f"[DEBUG] {player} on {game_date} | Team: {team} | API Status: {status}")
+        # FIX: Fallback to the scrape date if game_date is missing or None
+        target_date = game_date if game_date else date
         
-        if status in ["PRE_GAME", "IN_PROGRESS"]:
-            skipped += 1
-            # ...
+        # Use target_date instead of game_date
+        status = get_game_status(player, target_date, game_status_cache, team)
+                
+        logger.info(f"[DEBUG] {player} on {target_date} | Team: {team} | API Status: {status}")
         
         if status in ["PRE_GAME", "IN_PROGRESS"]:
             skipped += 1
@@ -82,18 +81,7 @@ def grade_pending_bets():
                 if not player_box.empty:
                     pb = player_box.iloc[0]
                     try:
-                        if stat_type == "Points": actual_val = pb['PTS']
-                        elif stat_type == "Rebounds": actual_val = pb['REB']
-                        elif stat_type == "Assists": actual_val = pb['AST']
-                        elif stat_type == "Pts+Rebs+Asts": actual_val = pb['PTS'] + pb['REB'] + pb['AST']
-                        elif stat_type == "Pts+Rebs": actual_val = pb['PTS'] + pb['REB']
-                        elif stat_type == "Pts+Asts": actual_val = pb['PTS'] + pb['AST']
-                        elif stat_type == "Rebs+Asts": actual_val = pb['REB'] + pb['AST']
-                        elif stat_type == "3-PT Made": actual_val = pb['FG3M']
-                        elif stat_type == "Blocked Shots": actual_val = pb['BLK']
-                        elif stat_type == "Steals": actual_val = pb['STL']
-                        elif stat_type == "Turnovers": actual_val = pb['TOV']
-                        elif stat_type == "Blks+Stls": actual_val = pb['BLK'] + pb['STL']
+                        actual_val = resolve_stat_value(pb, stat_type)
                     except Exception:
                         actual_val = None
 
@@ -101,18 +89,7 @@ def grade_pending_bets():
                 player_logs = league_df[(league_df['PLAYER_NAME'] == player) & (league_df['GAME_DATE'] == game_date)]
                 if not player_logs.empty:
                     pb = player_logs.iloc[0]
-                    if stat_type == "Points": actual_val = pb['PTS']
-                    elif stat_type == "Rebounds": actual_val = pb['REB']
-                    elif stat_type == "Assists": actual_val = pb['AST']
-                    elif stat_type == "Pts+Rebs+Asts": actual_val = pb['PTS'] + pb['REB'] + pb['AST']
-                    elif stat_type == "Pts+Rebs": actual_val = pb['PTS'] + pb['REB']
-                    elif stat_type == "Pts+Asts": actual_val = pb['PTS'] + pb['AST']
-                    elif stat_type == "Rebs+Asts": actual_val = pb['REB'] + pb['AST']
-                    elif stat_type == "3-PT Made": actual_val = pb['FG3M']
-                    elif stat_type == "Blocked Shots": actual_val = pb['BLK']
-                    elif stat_type == "Steals": actual_val = pb['STL']
-                    elif stat_type == "Turnovers": actual_val = pb['TOV']
-                    elif stat_type == "Blks+Stls": actual_val = pb['BLK'] + pb['STL']
+                    actual_val = resolve_stat_value(pb, stat_type)
 
             if actual_val is not None:
                 if (play == "OVER" and actual_val > line) or (play == "UNDER" and actual_val < line):
