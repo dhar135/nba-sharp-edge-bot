@@ -78,11 +78,11 @@ def send_discord_alert(plays_df, webhook_url):
     plays_df.to_csv(csv_path, index=False)
 
     # 2. Isolate Top Plays for the Embed (Prevents Discord text limits)
-    # Prioritize plays that passed the ML Veto, sorted by best EV Edge
-    cleared_plays = plays_df[plays_df['Vetoed'] == False].sort_values(by='EV Edge', ascending=False)
-    
-    # If the market is brutal and EVERYTHING was vetoed, just show the top vetoed plays
-    display_plays = cleared_plays.head(5) if not cleared_plays.empty else plays_df.head(5)
+    # V2.1: All plays reaching this point are already cleared (vetoed plays excluded upstream)
+    # Sort by Confidence score instead of raw edge (confidence accounts for stat reliability)
+    sort_col = 'Confidence' if 'Confidence' in plays_df.columns else 'EV Edge'
+    cleared_plays = plays_df.sort_values(by=sort_col, ascending=False)
+    display_plays = cleared_plays.head(5)
     
     # 3. Get Gemini AI Situational Analysis
     ai_text = get_ai_analysis(display_plays)
@@ -99,21 +99,22 @@ def send_discord_alert(plays_df, webhook_url):
     # Format the display rows
     msg = ""
     for _, row in display_plays.iterrows():
-        status = "✅ **CLEARED**" if not row['Vetoed'] else "🚨 **VETOED**"
+        tier_str = row.get('Tier', '✅')
+        confidence = row.get('Confidence', 0)
         msg += f"**{row['Player']}** ({row['Team']}) | {row['Stat']}\n"
         msg += f"> 🎯 Line: **{row['PP Line']}** | Play: **{row['Play']}**\n"
-        msg += f"> 📊 V2 Proj: **{row['V2 Proj']:.2f}** | Poisson: **{row['Poisson Prob']:.1f}%**\n"
-        msg += f"> ⚖️ Edge: **{row['EV Edge']:.2f}%** | {status}\n\n"
+        msg += f"> 📊 V2.1 Proj: **{row['V2 Proj']:.2f}** | Prob: **{row['Poisson Prob']:.1f}%**\n"
+        msg += f"> ⚖️ Edge: **{row['EV Edge']:.2f}%** | Confidence: **{confidence:.0f}** | {tier_str}\n\n"
 
     embeds.append({
-        "title": f"⚡ TOP V2 DETERMINISTIC PLAYS (Showing {len(display_plays)} of {len(plays_df)})",
+        "title": f"⚡ TOP V2.1 PLAYS (Showing {len(display_plays)} of {len(plays_df)})",
         "description": msg,
-        "color": 65280 if not cleared_plays.empty else 16711680,
-        "footer": {"text": "NBA Sharp Edge V2.0 • Full list in attached CSV"}
+        "color": 65280,
+        "footer": {"text": "NBA Sharp Edge V2.1 • NegBin + Strategy Filter • Full list in attached CSV"}
     })
 
     payload = {
-        "content": "🚨 **SHARP EDGE V2.0 ALERT** 🚨",
+        "content": "🚨 **SHARP EDGE V2.1 ALERT** 🚨",
         "embeds": embeds,
         "username": "SharpEdge Bot"
     }
