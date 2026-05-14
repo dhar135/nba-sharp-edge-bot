@@ -15,6 +15,10 @@ import joblib
 import os
 from utils.utils import logger
 
+# Always resolve paths relative to the project root
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_DEFAULT_MODEL_PATH = os.path.join(_PROJECT_ROOT, "models", "xgb_pts_model.pkl")
+
 
 class MLVetoLayer:
     """
@@ -24,13 +28,14 @@ class MLVetoLayer:
       3. Minutes stability veto (flags players with erratic minutes)
     """
 
-    def __init__(self, model_path="models/xgb_pts_model.pkl"):
+    def __init__(self, model_path=None):
         self.model = None
-        if os.path.exists(model_path):
-            self.model = joblib.load(model_path)
+        resolved_path = model_path or _DEFAULT_MODEL_PATH
+        if os.path.exists(resolved_path):
+            self.model = joblib.load(resolved_path)
             logger.info("[+] V1 XGBoost Veto Brain successfully loaded.")
         else:
-            logger.warning(f"[-] Veto model not found at {model_path}. ML veto disabled.")
+            logger.warning(f"[-] Veto model not found at {resolved_path}. ML veto disabled.")
 
     def check_veto(self, stat_type, matchup_str, game_date, recent_logs_df,
                    deterministic_play, ewma_projection=None, line=None):

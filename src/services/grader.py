@@ -16,7 +16,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_URL")
-DB_NAME = "sharp_edge.db"
+
+# Always resolve relative to the project root regardless of invocation directory
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DB_NAME = os.path.join(_PROJECT_ROOT, "sharp_edge.db")
 
 @timer
 def grade_pending_bets():

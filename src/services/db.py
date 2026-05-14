@@ -12,7 +12,11 @@ import pandas as pd
 from datetime import datetime
 from utils.utils import logger, timer
 
-DB_NAME = "sharp_edge.db"
+import os
+
+# Always resolve the DB path relative to the project root (two levels up from this file)
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DB_NAME = os.path.join(_PROJECT_ROOT, "sharp_edge.db")
 
 CORE_STATS = ["Points", "Rebounds", "Assists", "Pts+Rebs+Asts", "Pts+Rebs", "Pts+Asts", "Rebs+Asts"]
 MICRO_STATS = ["3-PT Made", "Blocked Shots", "Steals", "Turnovers", "Blks+Stls"]

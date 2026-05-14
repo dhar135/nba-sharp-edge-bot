@@ -183,8 +183,8 @@ def run_v2_pipeline(edge_threshold=2.5):
 
         ev_edge = get_true_edge(implied_prob, sportsbook_implied=54.2)
 
-        # --- Strategy Filter (blocks proven money losers) ---
-        should_play, strategy_reason, tier_label = evaluate_play(stat, play, ev_edge)
+        # --- Strategy Filter (blocks proven money losers + blacklisted players) ---
+        should_play, strategy_reason, tier_label = evaluate_play(stat, play, ev_edge, player_name=player)
         if not should_play:
             strategy_blocked_count += 1
             continue
@@ -262,6 +262,6 @@ def run_v2_pipeline(edge_threshold=2.5):
 
 if __name__ == "__main__":
     init_db()
-    # run_v2_pipeline(edge_threshold=2.5)
+    run_v2_pipeline(edge_threshold=2.5)
     logger.info("[*] Phase 5: Grading pending bets...")
     grade_pending_bets()

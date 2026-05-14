@@ -11,106 +11,123 @@ from google import genai
 from google.genai import types
 from utils.utils import logger, timer
 
+# Project root for resolving paths
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_NOTES_FILE = os.path.join(_PROJECT_ROOT, "notes.txt")
+_DATA_DIR = os.path.join(_PROJECT_ROOT, "data")
+
 CORE_STATS = ["Points", "Rebounds", "Assists", "Pts+Rebs+Asts", "Pts+Rebs", "Pts+Asts", "Rebs+Asts"]
 MICRO_STATS = ["3-PT Made", "Blocked Shots", "Steals", "Turnovers", "Blks+Stls"]
 
-@timer
-def get_ai_analysis(plays_df):
-    """Feeds top plays to Gemini 3.1 Flash-Lite for live news-aware insights."""
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
+
+def _read_and_clear_notes():
+    """
+    Reads the notes.txt file from the project root and returns its contents.
+    Clears the file after reading so notes don't repeat on the next alert cycle.
+
+    Usage: before running the pipeline, drop anything into notes.txt:
+        echo "Jokic listed questionable - knee. Tatum playing through ankle." > notes.txt
+    """
+    if not os.path.exists(_NOTES_FILE):
         return ""
-
-    client = genai.Client(api_key=api_key)
-
-    # Updated Prompt for Gemini 3 Reasoning
-    prompt = (
-        "You are an elite NBA quantitative analyst. I have identified mathematical edges on PrizePicks. "
-        "Use GOOGLE SEARCH to check for the latest injury news or lineup changes from the last 12 hours for these players. "
-        "Provide ONE punchy sentence per player explaining the situational edge. Keep it brief (under 20 words).\n\n"
-    )
-
-    for index, row in plays_df.iterrows():
-        prompt += f"- {row['Player']} ({row['Team']}) vs {row['Matchup']}. Bet: {row['Play']} {row['PP Line']} {row['Stat']}.\n"
-
     try:
-        logger.info("[*] Contacting Gemini 3.1 Flash-Lite (Search Enabled)...")
-        
-        response = client.models.generate_content(
-            model="gemini-3.1-flash-lite-preview",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                tools=[{"google_search": {}}],
-                thinking_config=types.ThinkingConfig(thinking_level="low")
-            )
-        )
-        return (response.text or "").strip()
-    
+        with open(_NOTES_FILE, "r") as f:
+            content = f.read().strip()
+        if content:
+            # Clear after reading so it doesn't repeat next cycle
+            with open(_NOTES_FILE, "w") as f:
+                f.write("")
+            logger.info(f"[*] Loaded analyst notes ({len(content)} chars). Clearing for next cycle.")
+        return content
     except Exception as e:
-        logger.info(f"[!] AI Analysis failed: {e}")
-        if "429" in str(e):
-             logger.info("[!] Quota exceeded. Attempting fallback without search...")
-             try:
-                 response = client.models.generate_content(
-                     model="gemini-3.1-flash-lite-preview",
-                     contents="Note: Avoid live search. " + prompt
-                 )
-                 return "⚠️ *News search unavailable (Quota). Analysis based on stats only.*\n\n" + (response.text or "").strip()
-             except Exception as fallback_error:
-                logger.info(f"[!] Fallback also failed: {fallback_error}")
-                return ""
+        logger.warning(f"[!] Could not read notes.txt: {e}")
         return ""
+
 
 @timer
 def send_discord_alert(plays_df, webhook_url):
     """
-    Pushes a batched V2.0 alert to Discord. 
-    Shows AI analysis, Top 5 plays in the embed, and attaches the full CSV.
+    Pushes a batched V2.1 alert to Discord.
+    - Groups top plays by game date so you can easily build same-day parlays
+    - Shows analyst notes from notes.txt if present
+    - Attaches full CSV of all plays
     """
     if plays_df.empty:
         return
-        
+
     logger.info(f"[*] Formatting {len(plays_df)} plays and generating CSV...")
-    
+
     # 1. Save ALL plays to CSV
-    os.makedirs("data", exist_ok=True)
-    csv_path = "data/v2_active_plays.csv"
+    os.makedirs(_DATA_DIR, exist_ok=True)
+    csv_path = os.path.join(_DATA_DIR, "v2_active_plays.csv")
     plays_df.to_csv(csv_path, index=False)
 
-    # 2. Isolate Top Plays for the Embed (Prevents Discord text limits)
-    # V2.1: All plays reaching this point are already cleared (vetoed plays excluded upstream)
-    # Sort by Confidence score instead of raw edge (confidence accounts for stat reliability)
+    # 2. Sort by confidence, show top 6
     sort_col = 'Confidence' if 'Confidence' in plays_df.columns else 'EV Edge'
-    cleared_plays = plays_df.sort_values(by=sort_col, ascending=False)
-    display_plays = cleared_plays.head(5)
-    
-    # 3. Get Gemini AI Situational Analysis
-    ai_text = get_ai_analysis(display_plays)
+    display_plays = plays_df.sort_values(by=sort_col, ascending=False).head(6)
+
+    # 3. Read analyst notes (from notes.txt — written by you before running)
+    analyst_notes = _read_and_clear_notes()
 
     # 4. Build Embeds
     embeds = []
-    if ai_text:
+
+    # Analyst notes embed (only if notes.txt had content)
+    if analyst_notes:
         embeds.append({
-            "title": "🤖 Gemini Situational Analysis", 
-            "description": ai_text, 
-            "color": 3447003
+            "title": "📝 Analyst Notes",
+            "description": analyst_notes,
+            "color": 0xF4C430  # Gold
         })
 
-    # Format the display rows
-    msg = ""
-    for _, row in display_plays.iterrows():
-        tier_str = row.get('Tier', '✅')
-        confidence = row.get('Confidence', 0)
-        msg += f"**{row['Player']}** ({row['Team']}) | {row['Stat']}\n"
-        msg += f"> 🎯 Line: **{row['PP Line']}** | Play: **{row['Play']}**\n"
-        msg += f"> 📊 V2.1 Proj: **{row['V2 Proj']:.2f}** | Prob: **{row['Poisson Prob']:.1f}%**\n"
-        msg += f"> ⚖️ Edge: **{row['EV Edge']:.2f}%** | Confidence: **{confidence:.0f}** | {tier_str}\n\n"
+    # 5. Group plays by game date for easy parlay building
+    has_dates = 'Game Date' in display_plays.columns and display_plays['Game Date'].notna().any()
 
+    if has_dates:
+        grouped = display_plays.groupby('Game Date', sort=True)
+        for game_date, group in grouped:
+            msg = ""
+            for _, row in group.iterrows():
+                tier_str = row.get('Tier', '✅')
+                confidence = row.get('Confidence', 0)
+                msg += f"**{row['Player']}** ({row['Team']}) | {row['Stat']}\n"
+                msg += f"> 🎯 Line: **{row['PP Line']}** | Play: **{row['Play']}**\n"
+                msg += f"> 📊 Proj: **{row['V2 Proj']:.2f}** | Prob: **{row['Poisson Prob']:.1f}%**\n"
+                msg += f"> ⚖️ Edge: **{row['EV Edge']:.2f}%** | Conf: **{confidence:.0f}** | {tier_str}\n\n"
+
+            embeds.append({
+                "title": f"📅 {game_date}  —  {len(group)} play(s)",
+                "description": msg,
+                "color": 0x00FF88
+            })
+    else:
+        # No date grouping — show as flat list
+        msg = ""
+        for _, row in display_plays.iterrows():
+            tier_str = row.get('Tier', '✅')
+            confidence = row.get('Confidence', 0)
+            game_date = row.get('Game Date', None)
+            date_str = f" | 📅 **{game_date}**" if game_date else ""
+            msg += f"**{row['Player']}** ({row['Team']}) | {row['Stat']}{date_str}\n"
+            msg += f"> 🎯 Line: **{row['PP Line']}** | Play: **{row['Play']}**\n"
+            msg += f"> 📊 Proj: **{row['V2 Proj']:.2f}** | Prob: **{row['Poisson Prob']:.1f}%**\n"
+            msg += f"> ⚖️ Edge: **{row['EV Edge']:.2f}%** | Conf: **{confidence:.0f}** | {tier_str}\n\n"
+
+        embeds.append({
+            "title": f"⚡ TOP V2.1 PLAYS (Showing {len(display_plays)} of {len(plays_df)})",
+            "description": msg,
+            "color": 0x00FF88,
+            "footer": {"text": "NBA Sharp Edge V2.1 • Full list in attached CSV"}
+        })
+
+    # Footer embed with summary stats
+    total = len(plays_df)
+    green = len(plays_df[plays_df.get('Tier', pd.Series()).str.contains('🟢', na=False)]) if 'Tier' in plays_df.columns else 0
     embeds.append({
-        "title": f"⚡ TOP V2.1 PLAYS (Showing {len(display_plays)} of {len(plays_df)})",
-        "description": msg,
-        "color": 65280,
-        "footer": {"text": "NBA Sharp Edge V2.1 • NegBin + Strategy Filter • Full list in attached CSV"}
+        "title": "📊 Session Summary",
+        "description": f"**{total}** plays cleared all filters | **{green}** 🟢 ELITE/STRONG tier\nFull board attached as CSV.",
+        "color": 0x2F3136,
+        "footer": {"text": "NBA Sharp Edge V2.1 • NegBin + Strategy Filter + Veto Layer"}
     })
 
     payload = {
