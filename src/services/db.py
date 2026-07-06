@@ -3,7 +3,9 @@
 V2.1 Database Service — SQLite persistence with deduplication
 
 Key changes from V2.0:
-  1. Proper deduplication: uses (date, player, stat_type, game_date) as unique key
+  1. Proper deduplication: uses (game_date, player, stat_type) as unique key
+     (run date is NOT part of the key — a play logged on two different run
+     days for the same game is the same bet, not two bets)
   2. New columns: confidence score, strategy tier
   3. Vetoed plays are never logged (enforced at main.py level, but double-checked here)
 """
@@ -74,7 +76,7 @@ def init_db():
 def log_predictions(df):
     """
     Takes generated V2.1 plays and UPSERTS them to the DB.
-    Enforces deduplication using (date, player, stat_type, game_date) as the unique key.
+    Enforces deduplication using (game_date, player, stat_type) as the unique key.
     """
     if df.empty:
         return
@@ -91,11 +93,13 @@ def log_predictions(df):
         ev_edge_val = row.get('EV Edge', row.get('Edge %', 0.0))
         game_date = row.get('Game Date', None)
 
-        # DEDUP CHECK: Use (date, player, stat_type, game_date) for uniqueness
+        # DEDUP KEY: the bet's identity is (game_date, player, stat_type).
+        # Run date must NOT be part of the key (caused season-long double logging).
+        dedup_game_date = game_date or today_date
         cursor.execute('''
             SELECT id, ev_edge FROM predictions
-            WHERE date = ? AND player = ? AND stat_type = ? AND (game_date = ? OR (game_date IS NULL AND ? IS NULL))
-        ''', (today_date, row['Player'], row['Stat'], game_date, game_date))
+            WHERE game_date = ? AND player = ? AND stat_type = ?
+        ''', (dedup_game_date, row['Player'], row['Stat']))
 
         existing_record = cursor.fetchone()
 
@@ -124,7 +128,7 @@ def log_predictions(df):
                  edge_percent, ml_prob, v2_proj, poisson_prob, ev_edge, vetoed,
                  confidence, tier, vegas_line, vegas_confirms, status)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
-            ''', (today_date, game_date, row['Player'], row['Team'],
+            ''', (today_date, dedup_game_date, row['Player'], row['Team'],
                   row.get('Matchup'), row['Stat'], row.get('PP Line'),
                   row.get('Play'), ev_edge_val, ml_prob_val,
                   v2_proj, poisson_prob, ev_edge_val, vetoed,
@@ -160,7 +164,7 @@ def log_predictions(df):
 def filter_new_plays(df):
     """
     Filters the dataframe to ONLY include plays that are new or have improved.
-    Uses (date, player, stat_type, game_date) for uniqueness to prevent dupes.
+    Uses (game_date, player, stat_type) for uniqueness to prevent dupes.
     """
     if df.empty:
         return df
@@ -174,11 +178,13 @@ def filter_new_plays(df):
         current_ev_edge = row.get('EV Edge', row.get('Edge %', 0.0))
         game_date = row.get('Game Date', None)
 
-        # Check for existing play using full dedup key
+        # DEDUP KEY: the bet's identity is (game_date, player, stat_type).
+        # Run date must NOT be part of the key (caused season-long double logging).
+        dedup_game_date = game_date or today_date
         cursor.execute('''
             SELECT ev_edge, edge_percent FROM predictions
-            WHERE date = ? AND player = ? AND stat_type = ? AND (game_date = ? OR (game_date IS NULL AND ? IS NULL))
-        ''', (today_date, row['Player'], row['Stat'], game_date, game_date))
+            WHERE game_date = ? AND player = ? AND stat_type = ?
+        ''', (dedup_game_date, row['Player'], row['Stat']))
         existing_record = cursor.fetchone()
 
         if not existing_record:
