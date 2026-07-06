@@ -79,6 +79,8 @@ PLAYER_BLACKLIST = {
     "Jarrett Allen",       # 2/9   = 22.2%
     "Scottie Barnes",      # 4/17  = 23.5%
     "Chet Holmgren",       # 0/6   = 0.0%
+    "De'Aaron Fox",        # 12/38 = 31.6%
+    "Devin Vassell",       # 20/44 = 45.5%
 }
 
 

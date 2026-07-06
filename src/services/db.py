@@ -57,6 +57,8 @@ def init_db():
         ("vetoed", "INTEGER"),
         ("confidence", "REAL"),
         ("tier", "TEXT"),
+        ("vegas_line", "REAL"),       # Median Vegas consensus line
+        ("vegas_confirms", "INTEGER"), # 1 = Vegas agrees with our play direction
     ]
     for col_name, col_type in new_columns:
         try:
@@ -107,6 +109,9 @@ def log_predictions(df):
         vetoed = 1 if row.get('Vetoed', False) else 0
         confidence = row.get('Confidence', None)
         tier = row.get('Tier', None)
+        vegas_line = row.get('Vegas Line', None)
+        vegas_confirms_raw = row.get('Vegas Confirms', None)
+        vegas_confirms = None if vegas_confirms_raw is None else (1 if vegas_confirms_raw else 0)
 
         # Double-check: NEVER log vetoed plays
         if vetoed:
@@ -117,13 +122,13 @@ def log_predictions(df):
                 INSERT INTO predictions
                 (date, game_date, player, team, matchup, stat_type, line, play,
                  edge_percent, ml_prob, v2_proj, poisson_prob, ev_edge, vetoed,
-                 confidence, tier, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
+                 confidence, tier, vegas_line, vegas_confirms, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
             ''', (today_date, game_date, row['Player'], row['Team'],
                   row.get('Matchup'), row['Stat'], row.get('PP Line'),
                   row.get('Play'), ev_edge_val, ml_prob_val,
                   v2_proj, poisson_prob, ev_edge_val, vetoed,
-                  confidence, tier))
+                  confidence, tier, vegas_line, vegas_confirms))
             inserted_count += 1
         else:
             existing_id, old_ev_edge = existing_record
@@ -135,10 +140,12 @@ def log_predictions(df):
                     UPDATE predictions
                     SET line = ?, edge_percent = ?, ev_edge = ?, ml_prob = ?,
                         v2_proj = ?, poisson_prob = ?, vetoed = ?,
-                        confidence = ?, tier = ?
+                        confidence = ?, tier = ?,
+                        vegas_line = ?, vegas_confirms = ?
                     WHERE id = ?
                 ''', (row.get('PP Line'), ev_edge_val, ev_edge_val, ml_prob_val,
-                      v2_proj, poisson_prob, vetoed, confidence, tier, existing_id))
+                      v2_proj, poisson_prob, vetoed, confidence, tier,
+                      vegas_line, vegas_confirms, existing_id))
                 updated_count += 1
             else:
                 dedup_count += 1

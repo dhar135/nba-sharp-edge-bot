@@ -35,6 +35,7 @@ from engine.veto import MLVetoLayer
 
 from services.db import init_db, log_predictions, filter_new_plays
 from services.notifier import send_discord_alert
+from services.odds_api import fetch_nba_events, build_vegas_lookup, get_vegas_comparison
 from utils.utils import logger, timer
 
 # For the Veto Layer game log lookups
@@ -90,6 +91,12 @@ def run_v2_pipeline(edge_threshold=2.5):
     if game_logs.empty:
         # Fallback to regular season if playoffs hasn't started
         game_logs = get_league_gamelog_for_ewma(season_type="Regular Season")
+
+    # NEW: Vegas Odds API — fetch player prop consensus lines for comparison
+    # Graceful: if ODDS_API_KEY is not set, vegas_lookup is empty and comparison is skipped
+    logger.info("[*] Fetching Vegas player prop lines (The Odds API)...")
+    nba_events = fetch_nba_events()
+    vegas_lookup = build_vegas_lookup(nba_events)
 
     # =========================================================================
     # 2. INITIALIZE ENGINES
@@ -214,6 +221,14 @@ def run_v2_pipeline(edge_threshold=2.5):
             vetoed_count += 1
             continue
 
+        # --- Vegas Odds Comparison ---
+        vegas_line, vegas_diff, vegas_confirms = get_vegas_comparison(
+            player, stat, line, play, vegas_lookup
+        )
+        if vegas_line is not None:
+            confirm_str = "✅ CONFIRMS" if vegas_confirms else "❌ DIVERGES"
+            logger.info(f"  [VEGAS] {player} {stat}: PP={line} | Vegas={vegas_line} | Diff={vegas_diff:+.1f} | {confirm_str}")
+
         results.append({
             "Player": player,
             "Team": true_team,
@@ -226,9 +241,12 @@ def run_v2_pipeline(edge_threshold=2.5):
             "EV Edge": ev_edge,
             "Confidence": confidence,
             "Tier": tier_label,
-            "Vetoed": False,  # Only non-vetoed plays reach here
+            "Vetoed": False,
             "ML Prob": "-",
-            "Game Date": row.get('Game Date', None)
+            "Game Date": row.get('Game Date', None),
+            "Vegas Line": vegas_line,
+            "Vegas Diff": vegas_diff,
+            "Vegas Confirms": vegas_confirms,
         })
 
     # =========================================================================

@@ -90,10 +90,22 @@ def send_discord_alert(plays_df, webhook_url):
             for _, row in group.iterrows():
                 tier_str = row.get('Tier', '✅')
                 confidence = row.get('Confidence', 0)
+                vegas_line = row.get('Vegas Line', None)
+                vegas_diff = row.get('Vegas Diff', None)
+                vegas_confirms = row.get('Vegas Confirms', None)
+
                 msg += f"**{row['Player']}** ({row['Team']}) | {row['Stat']}\n"
                 msg += f"> 🎯 Line: **{row['PP Line']}** | Play: **{row['Play']}**\n"
                 msg += f"> 📊 Proj: **{row['V2 Proj']:.2f}** | Prob: **{row['Poisson Prob']:.1f}%**\n"
-                msg += f"> ⚖️ Edge: **{row['EV Edge']:.2f}%** | Conf: **{confidence:.0f}** | {tier_str}\n\n"
+                msg += f"> ⚖️ Edge: **{row['EV Edge']:.2f}%** | Conf: **{confidence:.0f}** | {tier_str}\n"
+
+                # Vegas comparison line (only when data is available)
+                if vegas_line is not None:
+                    v_icon = "✅" if vegas_confirms else "❌"
+                    diff_str = f"{vegas_diff:+.1f}" if vegas_diff is not None else "N/A"
+                    msg += f"> 🏦 Vegas: **{vegas_line}** | Diff: **{diff_str}** {v_icon}\n"
+
+                msg += "\n"
 
             embeds.append({
                 "title": f"📅 {game_date}  —  {len(group)} play(s)",
