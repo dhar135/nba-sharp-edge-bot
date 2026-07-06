@@ -68,6 +68,12 @@ def init_db():
         except sqlite3.OperationalError:
             pass  # Column already exists
 
+    try:
+        cursor.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_pred_unique
+                          ON predictions(game_date, player, stat_type)""")
+    except sqlite3.OperationalError:
+        pass  # legacy DB still has duplicates — run scripts/dedupe_db.py
+
     conn.commit()
     conn.close()
     logger.info("[*] Database initialized/verified successfully with V2.1 schema.")
