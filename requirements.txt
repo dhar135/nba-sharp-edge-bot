@@ -12,3 +12,7 @@ requests==2.33.1
 requests-toolbelt==1.0.0
 six==1.17.0
 urllib3==2.6.3
+pytest==8.*
+scipy
+joblib
+scikit-learn
