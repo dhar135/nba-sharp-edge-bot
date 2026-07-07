@@ -88,7 +88,7 @@ PLAYER_BLACKLIST = {
 }
 
 
-def evaluate_play(stat_type, direction, ev_edge, player_name=None):
+def evaluate_play(stat_type, direction, ev_edge, player_name=None, vegas_confirms=None):
     """
     Evaluates whether a play should be taken based on empirical strategy rules.
 
@@ -98,6 +98,11 @@ def evaluate_play(stat_type, direction, ev_edge, player_name=None):
     # Player blacklist check
     if player_name and player_name in PLAYER_BLACKLIST:
         return False, f"BLACKLISTED: {player_name} has <30% historical win rate", "🚫 BLACKLIST"
+
+    # Vegas gate: deduped season data shows diverging picks ran 37.5% (n=16).
+    # Divergence is a hard block; no-line props are the profitable niche.
+    if vegas_confirms is False:
+        return False, "VEGAS DIVERGES: major-book line contradicts play direction", "🏦 VEGAS-BLOCK"
 
     key = (stat_type, direction)
     strategy = STRATEGY_TIERS.get(key, DEFAULT_STRATEGY)

@@ -118,6 +118,7 @@ def run_v2_pipeline(edge_threshold=2.5):
     results = []
     vetoed_count = 0
     strategy_blocked_count = 0
+    vegas_blocked_count = 0
 
     # =========================================================================
     # 3. TRANSFORM & CALCULATE — Process each prop
@@ -190,10 +191,23 @@ def run_v2_pipeline(edge_threshold=2.5):
 
         ev_edge = get_true_edge(implied_prob, sportsbook_implied=54.2)
 
-        # --- Strategy Filter (blocks proven money losers + blacklisted players) ---
-        should_play, strategy_reason, tier_label = evaluate_play(stat, play, ev_edge, player_name=player)
+        # --- Vegas Odds Comparison (moved before strategy filter so divergence can hard-block) ---
+        vegas_line, vegas_diff, vegas_confirms = get_vegas_comparison(
+            player, stat, line, play, vegas_lookup
+        )
+        if vegas_line is not None:
+            confirm_str = "✅ CONFIRMS" if vegas_confirms else "❌ DIVERGES"
+            logger.info(f"  [VEGAS] {player} {stat}: PP={line} | Vegas={vegas_line} | Diff={vegas_diff:+.1f} | {confirm_str}")
+
+        # --- Strategy Filter (blocks proven money losers + blacklisted players + Vegas divergence) ---
+        should_play, strategy_reason, tier_label = evaluate_play(
+            stat, play, ev_edge, player_name=player, vegas_confirms=vegas_confirms
+        )
         if not should_play:
-            strategy_blocked_count += 1
+            if tier_label == "🏦 VEGAS-BLOCK":
+                vegas_blocked_count += 1
+            else:
+                strategy_blocked_count += 1
             continue
 
         # --- Confidence Score ---
@@ -221,14 +235,6 @@ def run_v2_pipeline(edge_threshold=2.5):
             vetoed_count += 1
             continue
 
-        # --- Vegas Odds Comparison ---
-        vegas_line, vegas_diff, vegas_confirms = get_vegas_comparison(
-            player, stat, line, play, vegas_lookup
-        )
-        if vegas_line is not None:
-            confirm_str = "✅ CONFIRMS" if vegas_confirms else "❌ DIVERGES"
-            logger.info(f"  [VEGAS] {player} {stat}: PP={line} | Vegas={vegas_line} | Diff={vegas_diff:+.1f} | {confirm_str}")
-
         results.append({
             "Player": player,
             "Team": true_team,
@@ -254,6 +260,7 @@ def run_v2_pipeline(edge_threshold=2.5):
     # =========================================================================
     logger.info(f"[*] Phase 4: Processing results...")
     logger.info(f"    Strategy blocked: {strategy_blocked_count} plays")
+    logger.info(f"    Vegas blocked: {vegas_blocked_count} plays")
     logger.info(f"    Veto blocked: {vetoed_count} plays")
 
     results_df = pd.DataFrame(results)

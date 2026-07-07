@@ -20,3 +20,13 @@ def test_eight_pct_edge_passes_on_open_combo():
 def test_blocked_combos_stay_blocked():
     ok, _, _ = evaluate_play("Points", "OVER", 14.0)
     assert not ok
+
+
+def test_vegas_divergence_blocks():
+    ok, reason, label = evaluate_play("Rebounds", "UNDER", 10.0, vegas_confirms=False)
+    assert not ok and "VEGAS" in reason
+
+
+def test_vegas_confirm_and_no_data_pass():
+    assert evaluate_play("Rebounds", "UNDER", 10.0, vegas_confirms=True)[0]
+    assert evaluate_play("Rebounds", "UNDER", 10.0, vegas_confirms=None)[0]
