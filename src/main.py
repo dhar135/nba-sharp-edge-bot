@@ -37,6 +37,7 @@ from services.db import init_db, log_predictions, filter_new_plays
 from services.notifier import send_discord_alert
 from services.odds_api import fetch_nba_events, build_vegas_lookup, get_vegas_comparison
 from utils.utils import logger, timer
+from utils.season import get_season_phase
 
 # For the Veto Layer game log lookups
 from nba_api.stats.endpoints import playergamelog
@@ -53,6 +54,15 @@ PP_TO_NBA_ABBR = {
 
 @timer
 def run_v2_pipeline(edge_threshold=2.5):
+    phase = get_season_phase()
+    if phase == "Offseason":
+        logger.info("[-] Offseason — no slate. Exiting.")
+        return
+    if phase == "Playoffs" and os.getenv("RUN_DURING_PLAYOFFS", "0") != "1":
+        logger.info("[-] Playoffs: engine unprofitable in this regime (June 2026: 52.0%). "
+                    "Set RUN_DURING_PLAYOFFS=1 to override. Exiting.")
+        return
+
     logger.info("=== Booting Sharp Edge V2.1 (Deterministic Engine + Strategy Filter) ===\n")
 
     # =========================================================================
@@ -70,7 +80,7 @@ def run_v2_pipeline(edge_threshold=2.5):
     time.sleep(0.6)
 
     # Recent baseline for recency detection (5-game window)
-    adv_recent = get_advanced_player_baselines(last_n_games=5, season_type="Playoffs")
+    adv_recent = get_advanced_player_baselines(last_n_games=5, season_type=phase)
 
     if adv_season.empty or adv_recent.empty:
         logger.error("[-] NBA API timed out and failed to load player baselines. Exiting cycle.")
@@ -87,10 +97,7 @@ def run_v2_pipeline(edge_threshold=2.5):
     time.sleep(0.6)
 
     # NEW: Fetch game logs for EWMA computation
-    game_logs = get_league_gamelog_for_ewma(season_type="Playoffs")
-    if game_logs.empty:
-        # Fallback to regular season if playoffs hasn't started
-        game_logs = get_league_gamelog_for_ewma(season_type="Regular Season")
+    game_logs = get_league_gamelog_for_ewma(season_type=phase)
 
     # NEW: Vegas Odds API — fetch player prop consensus lines for comparison
     # Graceful: if ODDS_API_KEY is not set, vegas_lookup is empty and comparison is skipped
