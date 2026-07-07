@@ -1,0 +1,11 @@
+{
+  "markets": [
+    {
+      "ticker": "KXNBAPTS-26NOV01LALJAMES-24",
+      "title": "Will LeBron James score 25+ points?",
+      "status": "open",
+      "yes_bid_dollars": "0.5500",
+      "yes_ask_dollars": "0.5900"
+    }
+  ]
+}
