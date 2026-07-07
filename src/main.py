@@ -20,7 +20,7 @@ import pandas as pd
 import time
 from dotenv import load_dotenv
 
-from extractors.pp_extractors import fetch_live_board
+from venues import get_venue
 from extractors.nba_extractors import (
     get_advanced_player_baselines,
     get_team_pace_and_defense,
@@ -72,7 +72,7 @@ def run_v2_pipeline(edge_threshold=2.5):
     # =========================================================================
     logger.info("[*] Phase 1: Extracting raw data from stateless sources...")
 
-    pp_board = fetch_live_board()
+    pp_board = get_venue(os.getenv("VENUE", "prizepicks")).fetch_board("NBA")
     if pp_board.empty:
         logger.info("[-] PrizePicks board is empty or failed to load. Exiting.")
         return
