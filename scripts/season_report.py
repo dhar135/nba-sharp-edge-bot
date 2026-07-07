@@ -66,6 +66,11 @@ def main(out_path):
         "SELECT COALESCE(CAST(vegas_confirms AS TEXT),'no-line'), COUNT(*), "
         "ROUND(100.0*SUM(status='WIN')/COUNT(*),1) FROM predictions "
         "WHERE status IN ('WIN','LOSS') GROUP BY 1"))
+    parts.append(_section(conn, "CLV (line moved toward us = positive signal)",
+        "SELECT play, COUNT(*), "
+        "ROUND(AVG(CASE WHEN play='UNDER' THEN closing_line - line "
+        "ELSE line - closing_line END), 2) AS avg_clv "
+        "FROM predictions WHERE closing_line IS NOT NULL GROUP BY play"))
 
     with open(out_path, "w") as f:
         f.write("\n".join(parts) + "\n")

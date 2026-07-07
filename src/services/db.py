@@ -61,6 +61,7 @@ def init_db():
         ("tier", "TEXT"),
         ("vegas_line", "REAL"),       # Median Vegas consensus line
         ("vegas_confirms", "INTEGER"), # 1 = Vegas agrees with our play direction
+        ("closing_line", "REAL"),     # PrizePicks line captured near first lock (for CLV)
     ]
     for col_name, col_type in new_columns:
         try:
