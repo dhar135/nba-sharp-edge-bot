@@ -29,7 +29,7 @@ from extractors.nba_extractors import (
     get_league_gamelog_for_ewma,
 )
 from engine.projections import DeterministicProjector
-from engine.probability import calculate_probabilities, get_true_edge, calculate_confidence_score
+from engine.probability import calculate_probabilities, get_true_edge, calculate_confidence_score, calibrate_prob
 from engine.strategy import evaluate_play, get_strategy_summary
 from engine.role_change import detect_role_change
 from engine.veto import MLVetoLayer
@@ -211,6 +211,8 @@ def run_v2_pipeline(edge_threshold=2.5):
         else:
             play = "UNDER"
             implied_prob = probs["under"]
+
+        implied_prob = calibrate_prob(implied_prob)
 
         ev_edge = get_true_edge(implied_prob, sportsbook_implied=54.2)
 

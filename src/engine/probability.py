@@ -11,7 +11,9 @@ Key changes from V2.0:
 """
 from scipy.stats import poisson, nbinom
 import math
+import os
 import numpy as np
+import joblib
 from utils.utils import logger
 
 
@@ -154,6 +156,26 @@ def calculate_probabilities(projected_mean, sportsbook_line, stat_type="Points",
 def calculate_poisson_probabilities(projected_mean, sportsbook_line):
     """Legacy wrapper — calls the new unified probability function with Poisson."""
     return calculate_probabilities(projected_mean, sportsbook_line, stat_type="Rebounds")
+
+
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_CALIBRATION_PATH = os.path.join(_PROJECT_ROOT, "models", "calibration.pkl")
+_CALIBRATOR = None
+_CALIBRATOR_LOADED = False
+
+
+def calibrate_prob(p):
+    """Map raw model probability (0-100) to calibrated probability using the
+    isotonic curve fit on graded history. Identity if no curve is fitted."""
+    global _CALIBRATOR, _CALIBRATOR_LOADED
+    if not _CALIBRATOR_LOADED:
+        _CALIBRATOR_LOADED = True
+        if os.path.exists(_CALIBRATION_PATH):
+            _CALIBRATOR = joblib.load(_CALIBRATION_PATH)
+            logger.info("[+] Probability calibrator loaded.")
+    if _CALIBRATOR is None:
+        return p
+    return float(_CALIBRATOR.predict([p / 100.0])[0] * 100.0)
 
 
 def get_true_edge(implied_prob, sportsbook_implied=54.2):
