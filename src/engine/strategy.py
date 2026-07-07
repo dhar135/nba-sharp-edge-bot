@@ -7,6 +7,10 @@ Acts as a pre-filter BEFORE the probability engine to prevent betting on
 stat/direction combos with proven negative expectation.
 
 These guardrails are data-driven and should be recalibrated monthly.
+
+2026-07 recalibration: global 8% floor — 2.5–8% edge bucket ran at
+50.5–52.2% over 745 deduped bets. Every non-blocked tier's min_edge is
+now floored at 8.0 to remove that breakeven-or-losing volume.
 """
 from utils.utils import logger
 
@@ -36,22 +40,22 @@ from utils.utils import logger
 #   Pts+Rebs+Asts OVER:   BLOCKED (V2.0 data: 41.9%)
 
 STRATEGY_TIERS = {
-    # --- TIER 1: ELITE (64%+ actual win rate, large sample — threshold = 2.0%) ---
-    ("Rebounds", "UNDER"):       {"tier": 1, "min_edge": 2.0, "label": "🟢 ELITE"},
-    ("Blks+Stls", "UNDER"):     {"tier": 1, "min_edge": 2.0, "label": "🟢 ELITE"},
+    # --- TIER 1: ELITE (64%+ actual win rate, large sample — floored at 8.0%) ---
+    ("Rebounds", "UNDER"):       {"tier": 1, "min_edge": 8.0, "label": "🟢 ELITE"},
+    ("Blks+Stls", "UNDER"):     {"tier": 1, "min_edge": 8.0, "label": "🟢 ELITE"},
 
-    # --- TIER 2: STRONG (62-64% actual win rate — threshold = 3.0%) ---
-    ("Pts+Rebs+Asts", "UNDER"): {"tier": 2, "min_edge": 3.0, "label": "🟢 STRONG"},
-    ("Points", "UNDER"):         {"tier": 2, "min_edge": 3.0, "label": "🟢 STRONG"},
-    ("Pts+Asts", "UNDER"):      {"tier": 2, "min_edge": 3.0, "label": "🟢 STRONG"},
-    ("Assists", "UNDER"):        {"tier": 2, "min_edge": 3.0, "label": "🟢 STRONG"},
-    ("Pts+Rebs", "UNDER"):      {"tier": 2, "min_edge": 3.0, "label": "🟢 STRONG"},
-    ("Rebounds", "OVER"):        {"tier": 2, "min_edge": 3.0, "label": "🟢 STRONG"},
+    # --- TIER 2: STRONG (62-64% actual win rate — floored at 8.0%) ---
+    ("Pts+Rebs+Asts", "UNDER"): {"tier": 2, "min_edge": 8.0, "label": "🟢 STRONG"},
+    ("Points", "UNDER"):         {"tier": 2, "min_edge": 8.0, "label": "🟢 STRONG"},
+    ("Pts+Asts", "UNDER"):      {"tier": 2, "min_edge": 8.0, "label": "🟢 STRONG"},
+    ("Assists", "UNDER"):        {"tier": 2, "min_edge": 8.0, "label": "🟢 STRONG"},
+    ("Pts+Rebs", "UNDER"):      {"tier": 2, "min_edge": 8.0, "label": "🟢 STRONG"},
+    ("Rebounds", "OVER"):        {"tier": 2, "min_edge": 8.0, "label": "🟢 STRONG"},
 
-    # --- TIER 3: STANDARD (56-62% actual win rate — threshold = 5.0%) ---
-    ("Rebs+Asts", "UNDER"):     {"tier": 3, "min_edge": 5.0, "label": "🟡 STANDARD"},
+    # --- TIER 3: STANDARD (56-62% actual win rate — floored at 8.0%) ---
+    ("Rebs+Asts", "UNDER"):     {"tier": 3, "min_edge": 8.0, "label": "🟡 STANDARD"},
 
-    # --- TIER 4: CAUTIOUS (52-56% actual win rate — threshold = 8.0%) ---
+    # --- TIER 4: CAUTIOUS (52-56% actual win rate — floored at 8.0%) ---
     ("Rebs+Asts", "OVER"):      {"tier": 4, "min_edge": 8.0, "label": "🟡 CAUTIOUS"},
     ("Assists", "OVER"):         {"tier": 4, "min_edge": 8.0, "label": "🟡 CAUTIOUS"},
 
@@ -66,7 +70,7 @@ STRATEGY_TIERS = {
 }
 
 # Default for any stat/direction combo not explicitly listed
-DEFAULT_STRATEGY = {"tier": 3, "min_edge": 5.0, "label": "🟡 DEFAULT"}
+DEFAULT_STRATEGY = {"tier": 3, "min_edge": 8.0, "label": "🟡 DEFAULT"}
 
 # ---------------------------------------------------------------------------
 # Player Blacklist — model systematically mis-projects these players
