@@ -31,6 +31,7 @@ from extractors.nba_extractors import (
 from engine.projections import DeterministicProjector
 from engine.probability import calculate_probabilities, get_true_edge, calculate_confidence_score
 from engine.strategy import evaluate_play, get_strategy_summary
+from engine.role_change import detect_role_change
 from engine.veto import MLVetoLayer
 
 from services.db import init_db, log_predictions, filter_new_plays
@@ -142,6 +143,12 @@ def run_v2_pipeline(edge_threshold=2.5):
         season_rows = adv_season[adv_season['PLAYER_NAME'] == player]
         recent_rows = adv_recent[adv_recent['PLAYER_NAME'] == player]
         if season_rows.empty:
+            continue
+
+        role_changed, role_reason = detect_role_change(game_logs, player)
+        if role_changed:
+            logger.info(f"  [X] SKIP {player}: {role_reason}")
+            strategy_blocked_count += 1
             continue
 
         true_team = season_rows.iloc[0]['TEAM_ABBREVIATION']

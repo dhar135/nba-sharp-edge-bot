@@ -73,19 +73,10 @@ STRATEGY_TIERS = {
 DEFAULT_STRATEGY = {"tier": 3, "min_edge": 8.0, "label": "🟡 DEFAULT"}
 
 # ---------------------------------------------------------------------------
-# Player Blacklist — model systematically mis-projects these players
-# Based on 970 graded bets. Minimum 10 bets, <30% win rate.
-# Recalibrate monthly or when a player's role changes significantly.
+# Player Blacklist — replaced by engine/role_change.py — name lists were
+# reactive and overfit.
 # ---------------------------------------------------------------------------
-PLAYER_BLACKLIST = {
-    "Ajay Mitchell",       # 3/19  = 15.8%
-    "Duncan Robinson",     # 2/10  = 20.0%
-    "Jarrett Allen",       # 2/9   = 22.2%
-    "Scottie Barnes",      # 4/17  = 23.5%
-    "Chet Holmgren",       # 0/6   = 0.0%
-    "De'Aaron Fox",        # 12/38 = 31.6%
-    "Devin Vassell",       # 20/44 = 45.5%
-}
+PLAYER_BLACKLIST = set()
 
 
 def evaluate_play(stat_type, direction, ev_edge, player_name=None, vegas_confirms=None):
