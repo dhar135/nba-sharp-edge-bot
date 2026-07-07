@@ -51,6 +51,19 @@ def init_db():
         )
     ''')
 
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS kalshi_signals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts TEXT,
+            market_ticker TEXT,
+            title TEXT,
+            our_prob REAL,
+            market_prob REAL,
+            edge_net_fees REAL,
+            result TEXT DEFAULT 'PENDING'
+        )
+    ''')
+
     # Ensure the table has all V2.1 columns (graceful migration)
     new_columns = [
         ("v2_proj", "REAL"),
