@@ -1,0 +1,12 @@
+{
+  "injuries": [
+    {
+      "displayName": "Boston Celtics",
+      "injuries": [
+        {"status": "Out", "athlete": {"displayName": "Star Player"}},
+        {"status": "Day-To-Day", "athlete": {"displayName": "Healthy Enough Guy"}},
+        {"status": "Doubtful", "athlete": {"displayName": "Hurt Guy"}}
+      ]
+    }
+  ]
+}

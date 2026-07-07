@@ -37,6 +37,7 @@ from engine.veto import MLVetoLayer
 from services.db import init_db, log_predictions, filter_new_plays
 from services.notifier import send_discord_alert
 from services.odds_api import fetch_nba_events, build_vegas_lookup, get_vegas_comparison
+from services.injuries import fetch_injury_blocklist
 from utils.utils import logger, timer
 from utils.season import get_season_phase
 
@@ -106,6 +107,9 @@ def run_v2_pipeline(edge_threshold=2.5):
     nba_events = fetch_nba_events()
     vegas_lookup = build_vegas_lookup(nba_events)
 
+    # NEW: ESPN injuries feed — block Out/Doubtful players before projection
+    injury_blocklist = fetch_injury_blocklist()
+
     # =========================================================================
     # 2. INITIALIZE ENGINES
     # =========================================================================
@@ -148,6 +152,11 @@ def run_v2_pipeline(edge_threshold=2.5):
         role_changed, role_reason = detect_role_change(game_logs, player)
         if role_changed:
             logger.info(f"  [X] SKIP {player}: {role_reason}")
+            strategy_blocked_count += 1
+            continue
+
+        if player.lower().strip() in injury_blocklist:
+            logger.info(f"  [X] SKIP {player}: listed Out/Doubtful")
             strategy_blocked_count += 1
             continue
 
