@@ -38,7 +38,7 @@ from services.db import init_db, log_predictions, filter_new_plays
 from services.notifier import send_discord_alert
 from services.odds_api import fetch_nba_events, build_vegas_lookup, get_vegas_comparison
 from services.injuries import fetch_injury_blocklist
-from utils.utils import logger, timer
+from utils.utils import logger, timer, normalize_name
 from utils.season import get_season_phase
 
 # For the Veto Layer game log lookups
@@ -155,7 +155,7 @@ def run_v2_pipeline(edge_threshold=2.5):
             strategy_blocked_count += 1
             continue
 
-        if player.lower().strip() in injury_blocklist:
+        if normalize_name(player) in injury_blocklist:
             logger.info(f"  [X] SKIP {player}: listed Out/Doubtful")
             strategy_blocked_count += 1
             continue
@@ -212,6 +212,7 @@ def run_v2_pipeline(edge_threshold=2.5):
             play = "UNDER"
             implied_prob = probs["under"]
 
+        raw_prob = implied_prob
         implied_prob = calibrate_prob(implied_prob)
 
         ev_edge = get_true_edge(implied_prob, sportsbook_implied=54.2)
@@ -269,6 +270,7 @@ def run_v2_pipeline(edge_threshold=2.5):
             "V2 Proj": projection,
             "Play": play,
             "Poisson Prob": implied_prob,
+            "Raw Prob": raw_prob,
             "EV Edge": ev_edge,
             "Confidence": confidence,
             "Tier": tier_label,

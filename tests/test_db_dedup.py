@@ -45,3 +45,29 @@ def test_filter_new_plays_drops_already_logged_play(tmp_db, monkeypatch):
     _FakeDatetime._now = datetime(2026, 11, 1)    # next run day
     filtered = db.filter_new_plays(_play_row())
     assert filtered.empty
+
+
+def test_upgrade_updates_stale_play_direction(tmp_db, monkeypatch):
+    """A play whose direction flips between run days (line move) must have its
+    stored `play` and `line` updated on upgrade, not just edge/tier/vegas columns —
+    otherwise the grader grades the wrong side."""
+    import services.db as db
+    monkeypatch.setattr(db, "datetime", _FakeDatetime)
+
+    _FakeDatetime._now = datetime(2026, 10, 31)   # run day 1
+    day1 = _play_row(game_date="2026-11-01")
+    day1.loc[0, "Play"] = "UNDER"
+    day1.loc[0, "EV Edge"] = 9.0
+    db.log_predictions(day1)
+
+    _FakeDatetime._now = datetime(2026, 11, 1)    # run day 2, same game
+    day2 = _play_row(game_date="2026-11-01")
+    day2.loc[0, "Play"] = "OVER"
+    day2.loc[0, "EV Edge"] = 10.0
+    day2.loc[0, "PP Line"] = 21.5
+    db.log_predictions(day2)
+
+    row = sqlite3.connect(tmp_db).execute(
+        "SELECT play, line FROM predictions").fetchone()
+    assert row[0] == "OVER"
+    assert row[1] == 21.5

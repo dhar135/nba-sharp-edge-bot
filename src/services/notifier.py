@@ -100,7 +100,10 @@ def send_discord_alert(plays_df, webhook_url):
                 msg += f"> ⚖️ Edge: **{row['EV Edge']:.2f}%** | Conf: **{confidence:.0f}** | {tier_str}\n"
 
                 # Vegas comparison line (only when data is available)
-                if vegas_line is not None:
+                # Guard against NaN: when a batch mixes plays with/without Vegas lines,
+                # pandas coerces the column to float64 and None becomes NaN, which
+                # passes an `is not None` check but is not a usable value.
+                if vegas_line is not None and pd.notna(vegas_line):
                     v_icon = "✅" if vegas_confirms else "❌"
                     diff_str = f"{vegas_diff:+.1f}" if vegas_diff is not None else "N/A"
                     msg += f"> 🏦 Vegas: **{vegas_line}** | Diff: **{diff_str}** {v_icon}\n"

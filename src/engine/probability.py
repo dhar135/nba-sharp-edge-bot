@@ -171,8 +171,14 @@ def calibrate_prob(p):
     if not _CALIBRATOR_LOADED:
         _CALIBRATOR_LOADED = True
         if os.path.exists(_CALIBRATION_PATH):
-            _CALIBRATOR = joblib.load(_CALIBRATION_PATH)
-            logger.info("[+] Probability calibrator loaded.")
+            try:
+                _CALIBRATOR = joblib.load(_CALIBRATION_PATH)
+                logger.info("[+] Probability calibrator loaded.")
+            except Exception as e:
+                _CALIBRATOR = None
+                logger.warning(f"[!] Failed to load calibrator at {_CALIBRATION_PATH}: {e} — using raw probabilities.")
+        else:
+            logger.warning(f"[!] No calibrator found at {_CALIBRATION_PATH} — raw probabilities in use.")
     if _CALIBRATOR is None:
         return p
     return float(_CALIBRATOR.predict([p / 100.0])[0] * 100.0)

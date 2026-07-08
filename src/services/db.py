@@ -75,6 +75,7 @@ def init_db():
         ("vegas_line", "REAL"),       # Median Vegas consensus line
         ("vegas_confirms", "INTEGER"), # 1 = Vegas agrees with our play direction
         ("closing_line", "REAL"),     # PrizePicks line captured near first lock (for CLV)
+        ("raw_prob", "REAL"),         # Pre-calibration probability (avoids calibration circularity)
     ]
     for col_name, col_type in new_columns:
         try:
@@ -130,6 +131,7 @@ def log_predictions(df):
         # Extract V2.1 columns
         v2_proj = row.get('V2 Proj', None)
         poisson_prob = row.get('Poisson Prob', None)
+        raw_prob = row.get('Raw Prob', None)
         vetoed = 1 if row.get('Vetoed', False) else 0
         confidence = row.get('Confidence', None)
         tier = row.get('Tier', None)
@@ -146,30 +148,30 @@ def log_predictions(df):
                 INSERT INTO predictions
                 (date, game_date, player, team, matchup, stat_type, line, play,
                  edge_percent, ml_prob, v2_proj, poisson_prob, ev_edge, vetoed,
-                 confidence, tier, vegas_line, vegas_confirms, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
+                 confidence, tier, vegas_line, vegas_confirms, raw_prob, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
             ''', (today_date, dedup_game_date, row['Player'], row['Team'],
                   row.get('Matchup'), row['Stat'], row.get('PP Line'),
                   row.get('Play'), ev_edge_val, ml_prob_val,
                   v2_proj, poisson_prob, ev_edge_val, vetoed,
-                  confidence, tier, vegas_line, vegas_confirms))
+                  confidence, tier, vegas_line, vegas_confirms, raw_prob))
             inserted_count += 1
         else:
             existing_id, old_ev_edge = existing_record
             old_ev_edge = old_ev_edge if old_ev_edge else 0.0
 
             # Only update if the edge improved meaningfully (prevents duplicate noise)
-            if ev_edge_val > (old_ev_edge + 0.5):
+            if ev_edge_val >= (old_ev_edge + 0.5):
                 cursor.execute('''
                     UPDATE predictions
-                    SET line = ?, edge_percent = ?, ev_edge = ?, ml_prob = ?,
+                    SET line = ?, play = ?, edge_percent = ?, ev_edge = ?, ml_prob = ?,
                         v2_proj = ?, poisson_prob = ?, vetoed = ?,
                         confidence = ?, tier = ?,
-                        vegas_line = ?, vegas_confirms = ?
+                        vegas_line = ?, vegas_confirms = ?, raw_prob = ?
                     WHERE id = ?
-                ''', (row.get('PP Line'), ev_edge_val, ev_edge_val, ml_prob_val,
+                ''', (row.get('PP Line'), row.get('Play'), ev_edge_val, ev_edge_val, ml_prob_val,
                       v2_proj, poisson_prob, vetoed, confidence, tier,
-                      vegas_line, vegas_confirms, existing_id))
+                      vegas_line, vegas_confirms, raw_prob, existing_id))
                 updated_count += 1
             else:
                 dedup_count += 1

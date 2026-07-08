@@ -11,7 +11,7 @@ Sign up at: https://the-odds-api.com
 """
 import os
 import requests
-from utils.utils import logger
+from utils.utils import logger, normalize_name
 
 _BASE_URL = "https://api.the-odds-api.com/v4"
 _SPORT = "basketball_nba"
@@ -171,7 +171,7 @@ def build_vegas_lookup(events):
                 for outcome in market.get("outcomes", []):
                     # Odds API player prop outcomes have a "description" field for player name
                     # and a "point" field for the line value
-                    player_name = outcome.get("description", outcome.get("name", "")).lower().strip()
+                    player_name = normalize_name(outcome.get("description", outcome.get("name", "")))
                     point = outcome.get("point")
 
                     if not player_name or point is None:
@@ -214,7 +214,7 @@ def get_vegas_comparison(player_name, stat_type, pp_line, play, vegas_lookup):
     if not vegas_lookup:
         return None, None, None
 
-    player_lower = player_name.lower().strip()
+    player_lower = normalize_name(player_name)
     key = (player_lower, stat_type)
 
     vegas_line = vegas_lookup.get(key)

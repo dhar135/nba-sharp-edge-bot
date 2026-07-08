@@ -2,7 +2,7 @@
 """ESPN public injuries feed — blocks Out/Doubtful players before projection.
 Payload shape verified against the live endpoint on implementation day."""
 import requests
-from utils.utils import logger
+from utils.utils import logger, normalize_name
 
 ESPN_INJURIES_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries"
 BLOCKING_STATUSES = {"out", "doubtful"}
@@ -15,7 +15,7 @@ def parse_injuries(payload):
             status = str(inj.get("status", "")).lower()
             name = (inj.get("athlete") or {}).get("displayName", "")
             if status in BLOCKING_STATUSES and name:
-                blocked.add(name.lower().strip())
+                blocked.add(normalize_name(name))
     return blocked
 
 
