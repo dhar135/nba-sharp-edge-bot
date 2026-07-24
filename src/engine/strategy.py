@@ -90,10 +90,19 @@ def evaluate_play(stat_type, direction, ev_edge, player_name=None, vegas_confirm
     if player_name and player_name in PLAYER_BLACKLIST:
         return False, f"BLACKLISTED: {player_name} has <30% historical win rate", "🚫 BLACKLIST"
 
-    # Vegas gate: deduped season data shows diverging picks ran 37.5% (n=16).
-    # Divergence is a hard block; no-line props are the profitable niche.
-    if vegas_confirms is False:
-        return False, "VEGAS DIVERGES: major-book line contradicts play direction", "🏦 VEGAS-BLOCK"
+    # Vegas gate (2026-07 recalibration): the presence of a major-book line —
+    # not just disagreement with it — is the negative signal. Comparing only
+    # dates the Odds API fetcher actually ran (n=263, apples-to-apples):
+    #   priced by DK/FD/MGM: 49.2% (n=122)   |   unpriced: 65.2% (n=141)
+    #   z=2.63, two-tailed p=0.0085
+    # Even Vegas-CONFIRMING picks managed just 50.9% (n=106) — below breakeven
+    # on every payout ladder. The edge lives strictly where books aren't looking.
+    # vegas_confirms is None exactly when no line was found (get_vegas_comparison
+    # returns all-None or all-set), so "is not None" == "a book priced this".
+    # REVISIT after ~200 graded regular-season covered props: this sample is
+    # playoff-only, when books price more props than in the regular season.
+    if vegas_confirms is not None:
+        return False, "VEGAS COVERED: major book priced this prop (49.2% historical)", "🏦 VEGAS-BLOCK"
 
     key = (stat_type, direction)
     strategy = STRATEGY_TIERS.get(key, DEFAULT_STRATEGY)

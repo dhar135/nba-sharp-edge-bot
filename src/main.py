@@ -107,6 +107,18 @@ def run_v2_pipeline(edge_threshold=2.5):
     nba_events = fetch_nba_events()
     vegas_lookup = build_vegas_lookup(nba_events)
 
+    # The Vegas gate is now a HARD BLOCK on any book-priced prop, so an empty
+    # lookup is a silent-failure hazard: quota exhaustion (free tier = 500
+    # credits; 8 markets x N events burns ~64/night) makes every prop look
+    # unpriced, and the filter disables itself without failing. Fail loudly.
+    if nba_events and not vegas_lookup:
+        logger.error(
+            "[!!] VEGAS LOOKUP EMPTY despite %d scheduled events — likely Odds API "
+            "quota exhaustion or auth failure. The Vegas gate cannot block priced "
+            "props this run; every prop will appear unpriced. Historical win rate "
+            "on this unfiltered pool is ~59%% vs ~72%% filtered. Check quota before "
+            "trusting tonight's plays.", len(nba_events))
+
     # NEW: ESPN injuries feed — block Out/Doubtful players before projection
     injury_blocklist = fetch_injury_blocklist()
 

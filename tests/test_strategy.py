@@ -27,6 +27,13 @@ def test_vegas_divergence_blocks():
     assert not ok and "VEGAS" in reason
 
 
-def test_vegas_confirm_and_no_data_pass():
-    assert evaluate_play("Rebounds", "UNDER", 10.0, vegas_confirms=True)[0]
+def test_vegas_confirming_line_also_blocks():
+    # 2026-07: presence of any major-book line is the negative signal.
+    # Confirming picks won only 50.9% (n=106) — below breakeven.
+    ok, reason, _ = evaluate_play("Rebounds", "UNDER", 10.0, vegas_confirms=True)
+    assert not ok and "VEGAS" in reason
+
+
+def test_unpriced_prop_passes():
+    # No major-book line (vegas_confirms=None) is the profitable niche: 65.2%.
     assert evaluate_play("Rebounds", "UNDER", 10.0, vegas_confirms=None)[0]
