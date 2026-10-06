@@ -44,3 +44,25 @@ def test_league_gamelog_season_type_follows_phase(monkeypatch):
 
     nba_fetcher.get_league_gamelog(season_type="Regular Season")
     assert seen["season_type_all_star"] == "Regular Season"
+
+
+def test_early_season_window():
+    from utils.season import is_early_season
+    assert not is_early_season(date(2026, 10, 10))   # offseason
+    assert is_early_season(date(2026, 10, 20))       # opening week
+    assert is_early_season(date(2026, 11, 9))        # day 21
+    assert not is_early_season(date(2026, 11, 10))
+    assert not is_early_season(date(2027, 1, 15))
+    assert not is_early_season(date(2027, 5, 1))     # playoffs
+
+
+def test_paper_mode_env_overrides_auto(monkeypatch):
+    import main
+    monkeypatch.setattr(main, "is_early_season", lambda: True)
+    monkeypatch.delenv("PAPER_MODE", raising=False)
+    assert main._paper_mode() is True
+    monkeypatch.setenv("PAPER_MODE", "0")
+    assert main._paper_mode() is False
+    monkeypatch.setattr(main, "is_early_season", lambda: False)
+    monkeypatch.setenv("PAPER_MODE", "1")
+    assert main._paper_mode() is True

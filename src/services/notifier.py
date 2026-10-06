@@ -45,7 +45,7 @@ def _read_and_clear_notes():
 
 
 @timer
-def send_discord_alert(plays_df, webhook_url):
+def send_discord_alert(plays_df, webhook_url, paper=False):
     """
     Pushes a batched V2.1 alert to Discord.
     - Groups top plays by game date so you can easily build same-day parlays
@@ -71,6 +71,13 @@ def send_discord_alert(plays_df, webhook_url):
 
     # 4. Build Embeds
     embeds = []
+
+    if paper:
+        embeds.append({
+            "title": "🧪 PAPER MODE — do not bet these",
+            "description": "Early-season samples are thin. These plays are logged and graded for tracking only.",
+            "color": 0x808080  # Gray
+        })
 
     # Analyst notes embed (only if notes.txt had content)
     if analyst_notes:

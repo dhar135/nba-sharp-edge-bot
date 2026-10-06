@@ -39,7 +39,7 @@ from services.notifier import send_discord_alert
 from services.odds_api import fetch_nba_events, build_vegas_lookup, get_vegas_comparison
 from services.injuries import fetch_injury_blocklist
 from utils.utils import logger, timer, normalize_name
-from utils.season import get_season_phase
+from utils.season import get_season_phase, is_early_season
 
 # For the Veto Layer game log lookups
 from nba_api.stats.endpoints import playergamelog
@@ -52,6 +52,19 @@ PP_TO_NBA_ABBR = {
     "SA": "SAS", "NY": "NYK", "GS": "GSW",
     "NO": "NOP", "UTAH": "UTA", "WSH": "WAS",
 }
+
+
+# Players with fewer games than this are skipped: EWMA needs 5+ and the
+# role-change check needs 10+, so thin samples silently lose both safeguards.
+MIN_GAMES = int(os.getenv("MIN_GAMES", "8"))
+
+
+def _paper_mode():
+    """PAPER_MODE=1/0 forces it; otherwise on automatically in early season."""
+    forced = os.getenv("PAPER_MODE")
+    if forced is not None:
+        return forced == "1"
+    return is_early_season()
 
 
 @timer
@@ -101,6 +114,12 @@ def run_v2_pipeline(edge_threshold=2.5):
     # NEW: Fetch game logs for EWMA computation
     game_logs = get_league_gamelog_for_ewma(season_type=phase)
 
+    games_played = (game_logs.groupby("PLAYER_NAME").size().to_dict()
+                    if game_logs is not None and not game_logs.empty else None)
+    paper_mode = _paper_mode()
+    if paper_mode:
+        logger.info("[*] PAPER MODE: plays are logged and graded but alerts are flagged do-not-bet.")
+
     # NEW: Vegas Odds API — fetch player prop consensus lines for comparison
     # Graceful: if ODDS_API_KEY is not set, vegas_lookup is empty and comparison is skipped
     logger.info("[*] Fetching Vegas player prop lines (The Odds API)...")
@@ -143,6 +162,7 @@ def run_v2_pipeline(edge_threshold=2.5):
     vetoed_count = 0
     strategy_blocked_count = 0
     vegas_blocked_count = 0
+    thin_sample_count = 0
 
     # =========================================================================
     # 3. TRANSFORM & CALCULATE — Process each prop
@@ -159,6 +179,10 @@ def run_v2_pipeline(edge_threshold=2.5):
         season_rows = adv_season[adv_season['PLAYER_NAME'] == player]
         recent_rows = adv_recent[adv_recent['PLAYER_NAME'] == player]
         if season_rows.empty:
+            continue
+
+        if games_played is not None and games_played.get(player, 0) < MIN_GAMES:
+            thin_sample_count += 1
             continue
 
         role_changed, role_reason = detect_role_change(game_logs, player)
@@ -300,6 +324,7 @@ def run_v2_pipeline(edge_threshold=2.5):
     logger.info(f"[*] Phase 4: Processing results...")
     logger.info(f"    Strategy blocked: {strategy_blocked_count} plays")
     logger.info(f"    Vegas blocked: {vegas_blocked_count} plays")
+    logger.info(f"    Thin sample (<{MIN_GAMES} games): {thin_sample_count} props skipped")
     logger.info(f"    Veto blocked: {vetoed_count} plays")
 
     results_df = pd.DataFrame(results)
@@ -314,7 +339,7 @@ def run_v2_pipeline(edge_threshold=2.5):
             logger.info(f"\n[+] Found {len(new_plays_df)} *new* plays to alert.")
             webhook = os.getenv("DISCORD_WEBHOOK_URL")
             if webhook:
-                send_discord_alert(new_plays_df, webhook)
+                send_discord_alert(new_plays_df, webhook, paper=paper_mode)
                 logger.info("[+] Discord batched alert sent.")
 
             log_predictions(new_plays_df)
