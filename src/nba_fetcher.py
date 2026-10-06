@@ -15,6 +15,7 @@ from nba_api.stats.endpoints import (
     boxscoretraditionalv2,
 )
 
+from utils.season import get_current_season, get_season_phase
 from utils.utils import logger, timer
 
 
@@ -22,7 +23,7 @@ from utils.utils import logger, timer
 # Constants
 # ---------------------------------------------------------------------------
 
-CURRENT_SEASON = "2025-26"
+CURRENT_SEASON = get_current_season()
 
 # PrizePicks uses non-standard abbreviations — map them to official NBA ones
 PP_TO_NBA_ABBR = {
@@ -220,7 +221,7 @@ def get_player_gamelog(player_name: str, season: str = CURRENT_SEASON) -> pd.Dat
 
 
 @timer
-def get_league_gamelog(season: str = CURRENT_SEASON) -> pd.DataFrame | None:
+def get_league_gamelog(season: str = CURRENT_SEASON, season_type: str | None = None) -> pd.DataFrame | None:
     """
     Fetch every player box score for the season in one call (the "God-Call").
 
@@ -228,17 +229,22 @@ def get_league_gamelog(season: str = CURRENT_SEASON) -> pd.DataFrame | None:
     so grader.py can look them up directly via STAT_COLUMN_MAP.
 
     Args:
-        season: Season string, e.g. "2025-26"
+        season:      Season string, e.g. "2026-27"
+        season_type: "Regular Season" or "Playoffs". Defaults to the current
+                     calendar phase (offseason falls back to Regular Season).
 
     Returns:
         Sorted DataFrame with combo columns added, or None on failure.
     """
-    logger.info(f"[*] Fetching league-wide game log for {season}...")
+    if season_type is None:
+        phase = get_season_phase()
+        season_type = "Playoffs" if phase == "Playoffs" else "Regular Season"
+    logger.info(f"[*] Fetching league-wide {season_type} game log for {season}...")
     try:
         log = leaguegamelog.LeagueGameLog(
             player_or_team_abbreviation="P",
             season=season,
-            season_type_all_star="Playoffs",
+            season_type_all_star=season_type,
         )
         df = log.get_data_frames()[0]
 
