@@ -16,9 +16,10 @@ from nba_api.stats.endpoints import (
     leaguegamelog,
 )
 from nba_api.stats.static import teams
+from utils.season import get_current_season
 from utils.utils import logger, timer
 
-CURRENT_SEASON = "2025-26"
+CURRENT_SEASON = get_current_season()
 
 
 @timer

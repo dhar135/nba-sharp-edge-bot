@@ -1,6 +1,16 @@
 from datetime import date
 
 
+def get_current_season(d=None):
+    """NBA season string for a date, e.g. "2026-27" for Oct 2026 - Jun 2027.
+
+    Jul-Sep (offseason) returns the season that just finished.
+    """
+    d = d or date.today()
+    start = d.year if d.month >= 10 else d.year - 1
+    return f"{start}-{str(start + 1)[-2:]}"
+
+
 def get_season_phase(d=None):
     """NBA calendar phase. Approximate boundaries; play-in counts as playoffs."""
     d = d or date.today()
